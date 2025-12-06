@@ -1,136 +1,271 @@
-import React from 'react';
-import { Square, MousePointer2, Armchair, LayoutDashboard, Hand, Undo2, Redo2, DoorOpen, AppWindow, Type, Pencil } from 'lucide-react';
-import { Tool } from '@/lib/types';
+'use client';
 
+import React, { useCallback, useRef } from 'react';
 import { useStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
+import { Tool } from '@/lib/types';
+import {
+    MousePointer2, Square, Layers, DoorOpen, AppWindow,
+    Type, Pencil, Hand, Undo2, Redo2, Copy, Clipboard, Files,
+    Save, Upload, Trash2, Armchair, Ruler, Settings, LayoutTemplate, Download, Grid
+} from 'lucide-react';
 
-interface ToolbarProps { }
+interface ToolbarProps {
+    onOpenSettings: () => void;
+    onOpenTemplates: () => void;
+    onOpenExport: () => void;
+}
 
-export const Toolbar: React.FC<ToolbarProps> = () => {
-  const {
-    tool: activeTool,
-    setTool,
-    canUndo,
-    canRedo,
-    undo: onUndo,
-    redo: onRedo
-  } = useStore(useShallow(state => ({
-    tool: state.tool,
-    setTool: state.setTool,
-    canUndo: state.canUndo,
-    canRedo: state.canRedo,
-    undo: state.undo,
-    redo: state.redo
-  })));
+const TOOL_CONFIG = [
+    { tool: Tool.SELECT, icon: MousePointer2, label: 'Select', shortcut: 'V' },
+    { tool: Tool.PAN, icon: Hand, label: 'Pan', shortcut: 'Space' },
+    { tool: Tool.ROOM, icon: Square, label: 'Room', shortcut: 'R' },
+    { tool: Tool.ZONE, icon: Layers, label: 'Zone', shortcut: 'Z' },
+    { tool: Tool.FURNITURE, icon: Armchair, label: 'Furniture', shortcut: 'F' },
+    { tool: Tool.DOOR, icon: DoorOpen, label: 'Door', shortcut: 'D' },
+    { tool: Tool.WINDOW, icon: AppWindow, label: 'Window', shortcut: 'W' },
+    { tool: Tool.PENCIL, icon: Pencil, label: 'Draw', shortcut: 'P' },
+    { tool: Tool.TEXT, icon: Type, label: 'Text', shortcut: 'T' },
+    { tool: Tool.MEASURE, icon: Ruler, label: 'Measure', shortcut: 'M' },
+] as const;
 
-  const btnClass = (isActive: boolean, disabled: boolean = false) => `
-    p-3 rounded-lg border-2 border-black transition-all duration-200 flex items-center justify-center
-    ${disabled
-      ? 'bg-gray-100 opacity-50 cursor-not-allowed border-gray-300'
-      : isActive
-        ? 'bg-neo-yellow shadow-[var(--shadow-hard)] translate-x-[1px] translate-y-[1px]'
-        : 'bg-white hover:bg-gray-100 shadow-[var(--shadow-hard)] hover:translate-y-[-2px] hover:shadow-[var(--shadow-hard-sm)]'}
-  `;
+export const Toolbar: React.FC<ToolbarProps> = ({ onOpenSettings, onOpenTemplates, onOpenExport }) => {
+    const {
+        tool,
+        setTool,
+        canUndo,
+        canRedo,
+        undo,
+        redo,
+        copy,
+        paste,
+        duplicate,
+        selectedIds,
+        clipboard,
+        exportState,
+        importState,
+        clearAll,
+        settings,
+        toggleGridSnap,
+        clearMeasurements,
+        measurements,
+    } = useStore(useShallow(state => ({
+        tool: state.tool,
+        setTool: state.setTool,
+        canUndo: state.canUndo,
+        canRedo: state.canRedo,
+        undo: state.undo,
+        redo: state.redo,
+        copy: state.copy,
+        paste: state.paste,
+        duplicate: state.duplicate,
+        selectedIds: state.selectedIds,
+        clipboard: state.clipboard,
+        exportState: state.exportState,
+        importState: state.importState,
+        clearAll: state.clearAll,
+        settings: state.settings,
+        toggleGridSnap: state.toggleGridSnap,
+        clearMeasurements: state.clearMeasurements,
+        measurements: state.measurements,
+    })));
 
-  return (
-    <div className="fixed top-6 left-1/2 -translate-x-1/2 flex gap-4 p-2 bg-white/90 backdrop-blur-sm border-2 border-black shadow-[var(--shadow-hard)] rounded-xl z-50">
-      <div className="flex gap-2 mr-2 border-r-2 border-gray-200 pr-2">
-        <button
-          onClick={onUndo}
-          disabled={!canUndo}
-          className={btnClass(false, !canUndo)}
-          title="Undo (Ctrl+Z)"
-        >
-          <Undo2 size={20} />
-        </button>
-        <button
-          onClick={onRedo}
-          disabled={!canRedo}
-          className={btnClass(false, !canRedo)}
-          title="Redo (Ctrl+Y)"
-        >
-          <Redo2 size={20} />
-        </button>
-      </div>
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
-      <button
-        onClick={() => setTool(Tool.SELECT)}
-        className={btnClass(activeTool === Tool.SELECT)}
-        title="Select & Edit (V)"
-      >
-        <MousePointer2 size={20} />
-      </button>
+    const handleSaveProject = useCallback(() => {
+        const json = exportState();
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `room-plan-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }, [exportState]);
 
-      <button
-        onClick={() => setTool(Tool.PAN)}
-        className={btnClass(activeTool === Tool.PAN)}
-        title="Pan Tool (Space + Drag)"
-      >
-        <Hand size={20} />
-      </button>
+    const handleLoadProject = useCallback(() => {
+        fileInputRef.current?.click();
+    }, []);
 
-      <div className="w-[1px] bg-black h-8 mx-2 self-center opacity-20"></div>
+    const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
 
-      <button
-        onClick={() => setTool(Tool.ROOM)}
-        className={btnClass(activeTool === Tool.ROOM)}
-        title="Room Tool (R)"
-      >
-        <Square size={20} />
-      </button>
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const json = event.target?.result as string;
+            const success = importState(json);
+            if (!success) {
+                alert('Failed to import file. Please check the file format.');
+            }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+    }, [importState]);
 
-      <button
-        onClick={() => setTool(Tool.DOOR)}
-        className={btnClass(activeTool === Tool.DOOR)}
-        title="Door Tool (D)"
-      >
-        <DoorOpen size={20} />
-      </button>
+    const handleClear = useCallback(() => {
+        if (confirm('Are you sure you want to clear all objects?')) {
+            clearAll();
+        }
+    }, [clearAll]);
 
-      <button
-        onClick={() => setTool(Tool.WINDOW)}
-        className={btnClass(activeTool === Tool.WINDOW)}
-        title="Window Tool (W)"
-      >
-        <AppWindow size={20} />
-      </button>
+    return (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1">
+            {/* Tools */}
+            <div className="bg-white border-2 border-black shadow-[var(--shadow-hard)] rounded-xl p-1.5 flex gap-1">
+                {TOOL_CONFIG.map(({ tool: t, icon: Icon, label, shortcut }) => (
+                    <button
+                        key={t}
+                        onClick={() => setTool(t)}
+                        className={`flex flex-col items-center justify-center w-11 h-11 rounded-lg transition-all ${tool === t
+                            ? 'bg-neo-yellow border-2 border-black shadow-[var(--shadow-hard-sm)]'
+                            : 'hover:bg-gray-100 border-2 border-transparent'
+                            }`}
+                        title={`${label} (${shortcut})`}
+                    >
+                        <Icon size={16} strokeWidth={tool === t ? 2.5 : 2} />
+                        <span className="text-[8px] font-bold mt-0.5">{shortcut}</span>
+                    </button>
+                ))}
+            </div>
 
-      <div className="w-[1px] bg-black h-8 mx-2 self-center opacity-20"></div>
+            {/* Quick Actions */}
+            <div className="bg-white border-2 border-black shadow-[var(--shadow-hard)] rounded-xl p-1.5 flex gap-1">
+                <button
+                    onClick={onOpenTemplates}
+                    className="flex flex-col items-center justify-center w-10 h-10 rounded-lg transition-all hover:bg-gray-100"
+                    title="Room Templates"
+                >
+                    <LayoutTemplate size={16} />
+                </button>
+                <button
+                    onClick={toggleGridSnap}
+                    className={`flex flex-col items-center justify-center w-10 h-10 rounded-lg transition-all ${
+                        settings.gridSnap ? 'bg-neo-green' : 'hover:bg-gray-100'
+                    }`}
+                    title={`Grid Snap: ${settings.gridSnap ? 'ON' : 'OFF'}`}
+                >
+                    <Grid size={16} />
+                </button>
+            </div>
 
-      <button
-        onClick={() => setTool(Tool.PENCIL)}
-        className={btnClass(activeTool === Tool.PENCIL)}
-        title="Freehand Draw (P)"
-      >
-        <Pencil size={20} />
-      </button>
+            {/* Divider */}
+            <div className="w-px h-10 bg-gray-300 mx-0.5" />
 
-      <button
-        onClick={() => setTool(Tool.TEXT)}
-        className={btnClass(activeTool === Tool.TEXT)}
-        title="Text Tool (T)"
-      >
-        <Type size={20} />
-      </button>
+            {/* Edit Actions */}
+            <div className="bg-white border-2 border-black shadow-[var(--shadow-hard)] rounded-xl p-1.5 flex gap-1">
+                <button
+                    onClick={undo}
+                    disabled={!canUndo}
+                    className={`flex flex-col items-center justify-center w-9 h-9 rounded-lg transition-all ${canUndo ? 'hover:bg-gray-100' : 'opacity-30 cursor-not-allowed'}`}
+                    title="Undo (Ctrl+Z)"
+                >
+                    <Undo2 size={14} />
+                </button>
+                <button
+                    onClick={redo}
+                    disabled={!canRedo}
+                    className={`flex flex-col items-center justify-center w-9 h-9 rounded-lg transition-all ${canRedo ? 'hover:bg-gray-100' : 'opacity-30 cursor-not-allowed'}`}
+                    title="Redo (Ctrl+Y)"
+                >
+                    <Redo2 size={14} />
+                </button>
+            </div>
 
-      <div className="w-[1px] bg-black h-8 mx-2 self-center opacity-20"></div>
+            {/* Clipboard Actions */}
+            <div className="bg-white border-2 border-black shadow-[var(--shadow-hard)] rounded-xl p-1.5 flex gap-1">
+                <button
+                    onClick={copy}
+                    disabled={selectedIds.length === 0}
+                    className={`flex flex-col items-center justify-center w-9 h-9 rounded-lg transition-all ${selectedIds.length > 0 ? 'hover:bg-gray-100' : 'opacity-30 cursor-not-allowed'}`}
+                    title="Copy (Ctrl+C)"
+                >
+                    <Copy size={14} />
+                </button>
+                <button
+                    onClick={() => paste()}
+                    disabled={clipboard.length === 0}
+                    className={`flex flex-col items-center justify-center w-9 h-9 rounded-lg transition-all ${clipboard.length > 0 ? 'hover:bg-gray-100' : 'opacity-30 cursor-not-allowed'}`}
+                    title="Paste (Ctrl+V)"
+                >
+                    <Clipboard size={14} />
+                </button>
+                <button
+                    onClick={duplicate}
+                    disabled={selectedIds.length === 0}
+                    className={`flex flex-col items-center justify-center w-9 h-9 rounded-lg transition-all ${selectedIds.length > 0 ? 'hover:bg-gray-100' : 'opacity-30 cursor-not-allowed'}`}
+                    title="Duplicate (Ctrl+D)"
+                >
+                    <Files size={14} />
+                </button>
+            </div>
 
-      <button
-        onClick={() => setTool(Tool.ZONE)}
-        className={btnClass(activeTool === Tool.ZONE)}
-        title="Create Zone (Z)"
-      >
-        <LayoutDashboard size={20} />
-      </button>
+            {/* Divider */}
+            <div className="w-px h-10 bg-gray-300 mx-0.5" />
 
-      <button
-        onClick={() => setTool(Tool.FURNITURE)}
-        className={btnClass(activeTool === Tool.FURNITURE)}
-        title="Furniture Library (I)"
-      >
-        <Armchair size={20} />
-      </button>
-    </div>
-  );
+            {/* File Actions */}
+            <div className="bg-white border-2 border-black shadow-[var(--shadow-hard)] rounded-xl p-1.5 flex gap-1">
+                <button
+                    onClick={handleSaveProject}
+                    className="flex flex-col items-center justify-center w-9 h-9 rounded-lg transition-all hover:bg-gray-100"
+                    title="Save Project"
+                >
+                    <Save size={14} />
+                </button>
+                <button
+                    onClick={handleLoadProject}
+                    className="flex flex-col items-center justify-center w-9 h-9 rounded-lg transition-all hover:bg-gray-100"
+                    title="Load Project"
+                >
+                    <Upload size={14} />
+                </button>
+                <button
+                    onClick={onOpenExport}
+                    className="flex flex-col items-center justify-center w-9 h-9 rounded-lg transition-all hover:bg-gray-100"
+                    title="Export as PNG/SVG"
+                >
+                    <Download size={14} />
+                </button>
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json"
+                    onChange={handleFileChange}
+                    className="hidden"
+                />
+            </div>
+
+            {/* Settings & Clear */}
+            <div className="bg-white border-2 border-black shadow-[var(--shadow-hard)] rounded-xl p-1.5 flex gap-1">
+                <button
+                    onClick={onOpenSettings}
+                    className="flex flex-col items-center justify-center w-9 h-9 rounded-lg transition-all hover:bg-gray-100"
+                    title="Settings"
+                >
+                    <Settings size={14} />
+                </button>
+                <button
+                    onClick={handleClear}
+                    className="flex flex-col items-center justify-center w-9 h-9 rounded-lg transition-all hover:bg-red-100 text-red-600"
+                    title="Clear All"
+                >
+                    <Trash2 size={14} />
+                </button>
+            </div>
+
+            {/* Measurement indicator */}
+            {measurements.length > 0 && (
+                <div className="bg-blue-100 border-2 border-blue-300 rounded-lg px-2 py-1 flex items-center gap-1">
+                    <span className="text-[10px] text-blue-700 font-medium">{measurements.length} measurements</span>
+                    <button
+                        onClick={clearMeasurements}
+                        className="text-blue-500 hover:text-blue-700"
+                        title="Clear measurements"
+                    >
+                        <Trash2 size={12} />
+                    </button>
+                </div>
+            )}
+        </div>
+    );
 };

@@ -1,17 +1,12 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useCanvasInteraction } from '@/hooks/useCanvasInteraction';
-import { RoomShape, Tool, AppMode, Point, RoomVertex, ShapeType, VertexType, FurnitureItem, ZoneShape, FurnitureType, WallItem, TextItem, FreehandPath, GuideLine } from '@/lib/types';
-import { RoomShapeRenderer } from './RoomShape';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { Tool, AppMode, FurnitureType, RoomVertex, Point } from '@/lib/types';
 import { PropertiesPanel } from './PropertiesPanel';
 import { FurnitureLibrary } from './FurnitureLibrary';
-import { FurnitureRenderer } from './FurnitureRenderer';
-import { ZoneRenderer } from './ZoneRenderer';
-import { WallItemRenderer } from './WallItemRenderer';
-import { TextRenderer } from './TextRenderer';
-import { FreehandRenderer } from './FreehandRenderer';
 import { GridLayer } from './layers/GridLayer';
 import { ZoneLayer } from './layers/ZoneLayer';
 import { RoomLayer } from './layers/RoomLayer';
@@ -19,54 +14,49 @@ import { FurnitureLayer } from './layers/FurnitureLayer';
 import { WallItemLayer } from './layers/WallItemLayer';
 import { AnnotationLayer } from './layers/AnnotationLayer';
 import { InteractionLayer } from './layers/InteractionLayer';
-import { distance, midpoint, snapPoint, getNearestSegmentPoint, isPointInPolygon, getPolygonBounds, scalePolygon, rotatePolygon, getNearestWall, getWallSegmentPoints } from '@/lib/geometry';
-
+import { MeasurementLayer } from './layers/MeasurementLayer';
+import { midpoint, isPointInPolygon, getPolygonBounds, rotatePolygon } from '@/lib/geometry';
+import { ZOOM_MIN, ZOOM_MAX, ZOOM_WHEEL_SENSITIVITY, Z_INDEX } from '@/lib/constants';
 
 import { useStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 
-interface CanvasProps { }
+interface CanvasProps {
+  svgRef?: React.RefObject<SVGSVGElement | null>;
+  onViewBoxChange?: (center: { x: number; y: number }) => void;
+}
 
-export const Canvas: React.FC<CanvasProps> = () => {
+export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBoxChange }) => {
+  // Use keyboard shortcuts hook
+  useKeyboardShortcuts();
+
   // Select state from store
   const {
-    // Data
     shapes,
     furniture,
     zones,
     wallItems,
     texts,
     drawings,
-
-    // Selection
     selectedIds,
-
-    // Helper State
     tool,
     mode,
-
-    // Actions
-    setTool,
     setMode,
     setSelected,
     toggleSelection,
-    addShape,
-    addZone,
     addFurniture,
-    addWallItem,
-    addText,
-    addDrawing,
     updateShape,
     updateFurniture,
     updateZone,
     updateWallItem,
     updateText,
     updateDrawing,
-
-    // History
     saveToHistory,
     deleteSelected,
-    reorderItem
+    reorderItem,
+    measurements,
+    settings,
+    addMeasurement
   } = useStore(useShallow(state => ({
     shapes: state.shapes,
     furniture: state.furniture,
@@ -77,17 +67,11 @@ export const Canvas: React.FC<CanvasProps> = () => {
     selectedIds: state.selectedIds,
     tool: state.tool,
     mode: state.mode,
-    setTool: state.setTool,
     setMode: state.setMode,
     setSelected: state.setSelected,
     toggleSelection: state.toggleSelection,
     reorderItem: state.reorderItem,
-    addShape: state.addShape,
-    addZone: state.addZone,
     addFurniture: state.addFurniture,
-    addWallItem: state.addWallItem,
-    addText: state.addText,
-    addDrawing: state.addDrawing,
     updateShape: state.updateShape,
     updateFurniture: state.updateFurniture,
     updateZone: state.updateZone,
@@ -95,10 +79,13 @@ export const Canvas: React.FC<CanvasProps> = () => {
     updateText: state.updateText,
     updateDrawing: state.updateDrawing,
     saveToHistory: state.saveToHistory,
-    deleteSelected: state.deleteSelected
+    deleteSelected: state.deleteSelected,
+    measurements: state.measurements,
+    settings: state.settings,
+    addMeasurement: state.addMeasurement
   })));
 
-  // Derived state for backward compatibility / single selection UI
+  // Derived state
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : (selectedIds.length > 0 ? selectedIds[selectedIds.length - 1] : null);
 
   const getItemType = useCallback((id: string) => {
@@ -113,39 +100,23 @@ export const Canvas: React.FC<CanvasProps> = () => {
 
   const selectedType = selectedId ? getItemType(selectedId) : null;
 
-  // --- VIEW STATE ---
+  // View state
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, scale: 1, width: 1200, height: 800 });
-
-  // --- UI STATE ---
-  const [selectionMenuPos, setSelectionMenuPos] = useState<{ x: number, y: number } | null>(null);
   const [showFurnitureLibrary, setShowFurnitureLibrary] = useState(false);
+  const [pendingMeasurement, setPendingMeasurement] = useState<{ start: Point; end: Point } | null>(null);
 
-  const svgRef = useRef<SVGSVGElement>(null);
+  // Use internal ref if no external ref provided
+  const internalSvgRef = useRef<SVGSVGElement>(null);
+  const svgRef = externalSvgRef || internalSvgRef;
 
   // Use Interaction Hook
   const {
     snapLines, snapPoint: activeSnapPoint, selectionBox, ghostWallItem, pendingDrawing, placingCustomFurniture,
-    setDragStart, setDragAction, setHasDragged, setPlacingCustomFurniture,
+    setDragStart, setDragAction, setPlacingCustomFurniture,
     getSVGPoint,
     handleCanvasMouseDown, handleMouseMove, handleMouseUp,
-    movingChildrenIdsRef
+    movingChildrenIdsRef, isPanning
   } = useCanvasInteraction(svgRef, viewBox, setViewBox);
-
-  // Keyboard Delete & Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Prevent deletion if user is typing in an input
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        // Only delete if we are not editing text (simple check for now)
-        deleteSelected();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [deleteSelected]);
 
   // Update viewBox dimensions on mount and resize
   useEffect(() => {
@@ -169,8 +140,53 @@ export const Canvas: React.FC<CanvasProps> = () => {
     setShowFurnitureLibrary(tool === Tool.FURNITURE);
   }, [tool]);
 
-  // Handle Rotation Start (kept in Canvas or moved? Kept for now to interact with local handlers if needed,
-  // but could move to hook. For now, let's keep specific handlers that rely on setDragStart/Action from hook)
+  // Notify parent of viewBox center changes
+  useEffect(() => {
+    if (onViewBoxChange) {
+      const center = {
+        x: viewBox.x + viewBox.width / 2,
+        y: viewBox.y + viewBox.height / 2
+      };
+      onViewBoxChange(center);
+    }
+  }, [viewBox, onViewBoxChange]);
+
+  // Zoom with mouse wheel
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    // Get mouse position in SVG coordinates before zoom
+    const mouseX = viewBox.x + (e.clientX - rect.left) * viewBox.width / rect.width;
+    const mouseY = viewBox.y + (e.clientY - rect.top) * viewBox.height / rect.height;
+
+    // Calculate new scale
+    const delta = -e.deltaY * ZOOM_WHEEL_SENSITIVITY;
+    const newScale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, viewBox.scale * (1 + delta)));
+
+    if (newScale === viewBox.scale) return;
+
+    // Calculate new dimensions
+    const newWidth = window.innerWidth / newScale;
+    const newHeight = window.innerHeight / newScale;
+
+    // Adjust viewBox to zoom toward mouse position
+    const scaleRatio = viewBox.scale / newScale;
+    const newX = mouseX - (mouseX - viewBox.x) * scaleRatio;
+    const newY = mouseY - (mouseY - viewBox.y) * scaleRatio;
+
+    setViewBox({
+      x: newX,
+      y: newY,
+      scale: newScale,
+      width: newWidth,
+      height: newHeight
+    });
+  }, [viewBox]);
+
+  // Handle Rotation Start
   const handleRotationStart = useCallback((objectType: 'FURNITURE' | 'WALL_ITEM' | 'TEXT', e: React.MouseEvent) => {
     e.stopPropagation();
     if (!selectedId) return;
@@ -200,8 +216,7 @@ export const Canvas: React.FC<CanvasProps> = () => {
       if (type === 'ROOM') {
         const shape = shapes.find(s => s.id === id);
         if (shape) {
-          if (['x', 'y', 'width', 'height', 'rotation'].includes(field)) {
-            // Geometry updates...
+          if (['x', 'y', 'rotation'].includes(field)) {
             if (field === 'x' || field === 'y') {
               const bounds = getPolygonBounds(shape.vertices);
               const dx = field === 'x' ? (value as number) - bounds.center.x : 0;
@@ -212,8 +227,7 @@ export const Canvas: React.FC<CanvasProps> = () => {
               const rotatedVertices = rotatePolygon(shape.vertices, (value as number) - (shape.rotation || 0), bounds.center);
               updateShape(id, { vertices: rotatedVertices, rotation: value as number });
             }
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } else updateShape(id, { [field]: value } as any);
+          } else updateShape(id, { [field]: value });
         }
       } else if (type === 'ZONE') {
         const zone = zones.find(z => z.id === id);
@@ -235,7 +249,7 @@ export const Canvas: React.FC<CanvasProps> = () => {
       else if (type === 'TEXT') updateText(id, { [field]: value });
       else if (type === 'DRAWING') updateDrawing(id, { [field]: value });
     });
-  }, [selectedId, selectedIds, shapes, zones, furniture, wallItems, texts, drawings, getItemType, updateShape, updateZone, updateFurniture, updateWallItem, updateText, updateDrawing]);
+  }, [selectedId, selectedIds, shapes, zones, getItemType, updateShape, updateZone, updateFurniture, updateWallItem, updateText, updateDrawing]);
 
   // Handle furniture selection from library
   const handleFurnitureSelect = useCallback((type: FurnitureType, width: number, height: number) => {
@@ -245,12 +259,11 @@ export const Canvas: React.FC<CanvasProps> = () => {
     }
     const center = { x: viewBox.x + viewBox.width / 2, y: viewBox.y + viewBox.height / 2 };
     addFurniture({
-      id: uuidv4(), type, x: center.x, y: center.y, width, height, rotation: 0, zIndex: 2
+      id: uuidv4(), type, x: center.x, y: center.y, width, height, rotation: 0, zIndex: Z_INDEX.FURNITURE
     });
   }, [viewBox, addFurniture, setPlacingCustomFurniture]);
 
-  // Handlers for specific items (passing e and id)
-  // Note: These use setDragStart/Action from hook
+  // Item mouse down handlers
   const handleShapeMouseDown = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     const point = getSVGPoint(e);
@@ -269,7 +282,7 @@ export const Canvas: React.FC<CanvasProps> = () => {
 
     setDragStart(point);
     setDragAction('MOVE_SHAPE');
-  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction, shapes, furniture, texts, movingChildrenIdsRef]);
+  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction, shapes, furniture, texts, wallItems, movingChildrenIdsRef]);
 
   const handleZoneMouseDown = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -305,7 +318,6 @@ export const Canvas: React.FC<CanvasProps> = () => {
 
   const handleDrawingMouseDown = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    // Do nothing for now or select
     if (!e.shiftKey) setSelected([id]); else toggleSelection(id, true);
   }, [setSelected, toggleSelection]);
 
@@ -318,7 +330,6 @@ export const Canvas: React.FC<CanvasProps> = () => {
 
   const handleVertexClick = useCallback((vertexId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    // Toggle vertex type
     if (selectedId && selectedType === 'ROOM') {
       const shape = shapes.find(s => s.id === selectedId);
       if (shape) {
@@ -348,7 +359,6 @@ export const Canvas: React.FC<CanvasProps> = () => {
     e.stopPropagation();
     if (!selectedId) return;
 
-    // Split edge
     if (selectedType === 'ROOM') {
       const s = shapes.find(s => s.id === selectedId);
       if (s) {
@@ -383,54 +393,7 @@ export const Canvas: React.FC<CanvasProps> = () => {
     setDragAction(`ADJUST_RADIUS_${vertexId}`);
   }, [getSVGPoint, setDragStart, setDragAction]);
 
-  // useMemo removed as render loop is now decomposed into layers
-
-
-  // Keyboard Delete & Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Prevent deletion if user is typing in an input
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        // Only delete if we are not editing text (simple check for now)
-        deleteSelected();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [deleteSelected]);
-
-  // Update viewBox dimensions on mount and resize
-  useEffect(() => {
-    const updateViewBox = () => {
-      if (typeof window !== 'undefined') {
-        setViewBox(prev => ({
-          ...prev,
-          width: window.innerWidth / prev.scale,
-          height: window.innerHeight / prev.scale
-        }));
-      }
-    };
-
-    updateViewBox();
-    window.addEventListener('resize', updateViewBox);
-    return () => window.removeEventListener('resize', updateViewBox);
-  }, []);
-
-  // Show/hide furniture library based on tool
-  useEffect(() => {
-    setShowFurnitureLibrary(tool === Tool.FURNITURE);
-  }, [tool]);
-
-
-
-
-
-
-
-  // Derived item for panel
+  // Get selected item for properties panel
   const getSelectedItemForPanel = () => {
     if (!selectedId) return null;
     const type = selectedType;
@@ -445,17 +408,74 @@ export const Canvas: React.FC<CanvasProps> = () => {
 
   const selectedItemForPanel = getSelectedItemForPanel();
 
+  // Measurement tool handlers
+  const handleMeasureStart = useCallback((point: Point) => {
+    setPendingMeasurement({ start: point, end: point });
+  }, []);
+
+  const handleMeasureMove = useCallback((point: Point) => {
+    if (pendingMeasurement) {
+      setPendingMeasurement({ ...pendingMeasurement, end: point });
+    }
+  }, [pendingMeasurement]);
+
+  const handleMeasureEnd = useCallback((point: Point) => {
+    if (pendingMeasurement) {
+      const dx = point.x - pendingMeasurement.start.x;
+      const dy = point.y - pendingMeasurement.start.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance > 5) { // Only add if meaningful distance
+        addMeasurement({
+          id: uuidv4(),
+          start: pendingMeasurement.start,
+          end: point,
+          distance
+        });
+      }
+      setPendingMeasurement(null);
+    }
+  }, [pendingMeasurement, addMeasurement]);
+
+  // Cursor based on tool/state
+  const getCursor = () => {
+    if (isPanning) return 'grabbing';
+    if (tool === Tool.PAN) return 'grab';
+    if (tool === Tool.SELECT) return 'default';
+    if (tool === Tool.MEASURE) return 'crosshair';
+    return 'crosshair';
+  };
+
   return (
     <div className="w-full h-full bg-grid relative">
-      {/* ... svg ... */}
       <svg
         ref={svgRef}
-        className="w-full h-full cursor-crosshair"
+        className="w-full h-full"
+        style={{ cursor: getCursor() }}
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
         xmlns="http://www.w3.org/2000/svg"
-        onMouseDown={handleCanvasMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
+        onMouseDown={(e) => {
+          if (tool === Tool.MEASURE) {
+            handleMeasureStart(getSVGPoint(e));
+          } else {
+            handleCanvasMouseDown(e);
+          }
+        }}
+        onMouseMove={(e) => {
+          if (tool === Tool.MEASURE && pendingMeasurement) {
+            handleMeasureMove(getSVGPoint(e));
+          } else {
+            handleMouseMove(e);
+          }
+        }}
+        onMouseUp={(e) => {
+          if (tool === Tool.MEASURE && pendingMeasurement) {
+            handleMeasureEnd(getSVGPoint(e));
+          } else {
+            handleMouseUp(e);
+          }
+        }}
+        onWheel={handleWheel}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
@@ -465,7 +485,7 @@ export const Canvas: React.FC<CanvasProps> = () => {
 
           if (type && !isNaN(w) && !isNaN(h)) {
             const point = getSVGPoint(e);
-            const newFurniture: FurnitureItem = {
+            addFurniture({
               id: uuidv4(),
               type: type as FurnitureType,
               x: point.x,
@@ -473,19 +493,18 @@ export const Canvas: React.FC<CanvasProps> = () => {
               width: w,
               height: h,
               rotation: 0,
-              zIndex: 2
-            };
-            addFurniture(newFurniture);
+              zIndex: Z_INDEX.FURNITURE
+            });
           }
         }}
       >
-        <GridLayer viewBox={viewBox} />
+        {settings.showGrid && <GridLayer viewBox={viewBox} />}
 
         <ZoneLayer
           zones={zones}
           selectedIds={selectedIds}
           mode={mode}
-          onMouseDown={(e, id) => handleZoneMouseDown(e, id)}
+          onMouseDown={handleZoneMouseDown}
           onDoubleClick={() => setMode(AppMode.VERTEX_EDIT)}
           onVertexMouseDown={handleVertexMouseDown}
           onEdgeMouseDown={handleEdgeMouseDown}
@@ -529,6 +548,14 @@ export const Canvas: React.FC<CanvasProps> = () => {
           pendingDrawing={pendingDrawing}
         />
 
+        <MeasurementLayer
+          measurements={measurements}
+          pendingMeasurement={pendingMeasurement}
+          unitSystem={settings.unitSystem}
+          metricUnit={settings.metricUnit}
+          imperialUnit={settings.imperialUnit}
+        />
+
         <InteractionLayer
           snapLines={snapLines}
           snapPoint={activeSnapPoint}
@@ -537,12 +564,16 @@ export const Canvas: React.FC<CanvasProps> = () => {
         />
       </svg>
 
+      {/* Zoom indicator */}
+      <div className="fixed bottom-6 left-6 bg-white/90 border-2 border-black shadow-[var(--shadow-hard)] rounded-lg px-3 py-1.5 text-xs font-mono z-50">
+        {Math.round(viewBox.scale * 100)}%
+      </div>
+
       {/* UI Overlays */}
       {showFurnitureLibrary && (
         <FurnitureLibrary onSelectItem={handleFurnitureSelect} />
       )}
 
-      {/* Properties Panel replaces SelectionMenu */}
       {selectedItemForPanel && selectedType && (
         <PropertiesPanel
           selectedItem={selectedItemForPanel}

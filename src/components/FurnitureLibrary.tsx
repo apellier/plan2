@@ -1,57 +1,145 @@
-import React from 'react';
+'use client';
+
+import React, { useState } from 'react';
 import { FurnitureType } from '@/lib/types';
-import { Armchair, BedDouble, Sofa, LampFloor, PencilRuler } from 'lucide-react';
+import { FURNITURE_PRESETS, FURNITURE_CATEGORIES } from '@/lib/constants';
+import {
+    BedDouble, Sofa, ChefHat, Bath, Briefcase, TreeDeciduous, UtensilsCrossed,
+    PencilRuler, ChevronDown, ChevronRight
+} from 'lucide-react';
 
 interface FurnitureLibraryProps {
     onSelectItem: (type: FurnitureType, width: number, height: number) => void;
 }
 
-const ITEMS: { type: FurnitureType; label: string; w: number; h: number; icon: React.ReactNode }[] = [
-    { type: 'BED_QUEEN', label: 'Queen Bed', w: 160, h: 200, icon: <BedDouble size={24} /> },
-    { type: 'SOFA_3SEATER', label: 'Sofa', w: 220, h: 90, icon: <Sofa size={24} /> },
-    { type: 'TABLE_DINING', label: 'Dining Table', w: 180, h: 90, icon: <div className="w-6 h-3 border-2 border-black rounded-sm bg-neo-yellow"></div> },
-    { type: 'CHAIR_OFFICE', label: 'Office Chair', w: 60, h: 60, icon: <div className="w-4 h-4 rounded-full border-2 border-black bg-neo-blue"></div> },
-    { type: 'PLANT', label: 'Plant', w: 40, h: 40, icon: <LampFloor size={24} /> },
-];
+type CategoryKey = keyof typeof FURNITURE_CATEGORIES;
+
+const CATEGORY_ICONS: Record<CategoryKey, React.ReactNode> = {
+    BEDROOM: <BedDouble size={14} />,
+    LIVING: <Sofa size={14} />,
+    DINING: <UtensilsCrossed size={14} />,
+    OFFICE: <Briefcase size={14} />,
+    BATHROOM: <Bath size={14} />,
+    KITCHEN: <ChefHat size={14} />,
+    OUTDOOR: <TreeDeciduous size={14} />,
+};
+
+// Group furniture by category
+const FURNITURE_BY_CATEGORY = Object.entries(FURNITURE_PRESETS).reduce((acc, [key, value]) => {
+    const category = value.category as CategoryKey;
+    if (!acc[category]) acc[category] = [];
+    acc[category].push({
+        type: key as FurnitureType,
+        label: value.label,
+        width: value.width,
+        height: value.height,
+    });
+    return acc;
+}, {} as Record<CategoryKey, { type: FurnitureType; label: string; width: number; height: number }[]>);
 
 export const FurnitureLibrary: React.FC<FurnitureLibraryProps> = ({ onSelectItem }) => {
+    const [expandedCategories, setExpandedCategories] = useState<Set<CategoryKey>>(
+        new Set(['BEDROOM', 'LIVING'])
+    );
+    const [searchTerm, setSearchTerm] = useState('');
+
+    const toggleCategory = (category: CategoryKey) => {
+        const newExpanded = new Set(expandedCategories);
+        if (newExpanded.has(category)) {
+            newExpanded.delete(category);
+        } else {
+            newExpanded.add(category);
+        }
+        setExpandedCategories(newExpanded);
+    };
+
+    // Filter furniture by search term
+    const filteredCategories = Object.entries(FURNITURE_BY_CATEGORY).map(([category, items]) => ({
+        category: category as CategoryKey,
+        items: items.filter(item =>
+            item.label.toLowerCase().includes(searchTerm.toLowerCase())
+        )
+    })).filter(({ items }) => items.length > 0);
+
     return (
-        <div className="fixed top-28 left-4 z-40 bg-white border-2 border-black shadow-[var(--shadow-hard)] rounded-lg p-3 flex flex-col gap-3 w-40">
-            <h3 className="text-xs font-bold font-mono border-b border-gray-200 pb-2">FURNITURE</h3>
-            <div className="flex flex-col gap-2">
-                {ITEMS.map((item) => (
-                    <button
-                        key={item.type}
-                        draggable
-                        onDragStart={(e) => {
-                            e.dataTransfer.setData('furniture-type', item.type);
-                            e.dataTransfer.setData('furniture-width', item.w.toString());
-                            e.dataTransfer.setData('furniture-height', item.h.toString());
-                            e.dataTransfer.effectAllowed = 'copy';
-                        }}
-                        onClick={() => onSelectItem(item.type, item.w, item.h)}
-                        className="flex items-center gap-3 p-2 rounded hover:bg-gray-100 border border-transparent hover:border-black transition-all group cursor-grab active:cursor-grabbing"
-                    >
-                        <div className="text-gray-700 group-hover:text-black group-hover:scale-110 transition-transform">
-                            {item.icon}
-                        </div>
-                        <span className="text-xs font-medium">{item.label}</span>
-                    </button>
+        <div className="fixed top-20 left-4 z-40 bg-white border-2 border-black shadow-[var(--shadow-hard)] rounded-lg w-56 max-h-[calc(100vh-120px)] flex flex-col">
+            {/* Header */}
+            <div className="p-3 border-b-2 border-gray-200">
+                <h3 className="text-xs font-bold font-mono mb-2">FURNITURE</h3>
+                <input
+                    type="text"
+                    placeholder="Search..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full px-2 py-1 text-xs border-2 border-gray-200 rounded focus:border-black focus:outline-none"
+                />
+            </div>
+
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto p-2">
+                {filteredCategories.map(({ category, items }) => (
+                    <div key={category} className="mb-1">
+                        {/* Category Header */}
+                        <button
+                            onClick={() => toggleCategory(category)}
+                            className="w-full flex items-center gap-2 p-2 rounded hover:bg-gray-100 transition-colors"
+                        >
+                            {expandedCategories.has(category) ? (
+                                <ChevronDown size={12} />
+                            ) : (
+                                <ChevronRight size={12} />
+                            )}
+                            <span className="text-gray-600">{CATEGORY_ICONS[category]}</span>
+                            <span className="text-xs font-semibold flex-1 text-left">
+                                {FURNITURE_CATEGORIES[category]}
+                            </span>
+                            <span className="text-[10px] text-gray-400">{items.length}</span>
+                        </button>
+
+                        {/* Category Items */}
+                        {expandedCategories.has(category) && (
+                            <div className="ml-4 space-y-0.5">
+                                {items.map((item) => (
+                                    <button
+                                        key={item.type}
+                                        draggable
+                                        onDragStart={(e) => {
+                                            e.dataTransfer.setData('furniture-type', item.type);
+                                            e.dataTransfer.setData('furniture-width', item.width.toString());
+                                            e.dataTransfer.setData('furniture-height', item.height.toString());
+                                            e.dataTransfer.effectAllowed = 'copy';
+                                        }}
+                                        onClick={() => onSelectItem(item.type, item.width, item.height)}
+                                        className="w-full flex items-center justify-between p-1.5 rounded text-left hover:bg-gray-100 border border-transparent hover:border-gray-300 transition-all cursor-grab active:cursor-grabbing"
+                                    >
+                                        <span className="text-[11px]">{item.label}</span>
+                                        <span className="text-[9px] text-gray-400 font-mono">
+                                            {item.width}×{item.height}
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 ))}
 
-                {/* Custom Shape Button */}
-                <button
-                    onMouseDown={() => onSelectItem('CUSTOM', 0, 0)}
-                    className="flex items-center gap-3 p-2 rounded hover:bg-neo-yellow border border-transparent hover:border-black transition-all group"
-                >
-                    <div className="text-gray-700 group-hover:text-black group-hover:scale-110 transition-transform">
-                        <PencilRuler size={24} />
-                    </div>
-                    <span className="text-xs font-medium">Free Shape</span>
-                </button>
+                {/* Custom Shape */}
+                <div className="mt-2 pt-2 border-t border-gray-200">
+                    <button
+                        onClick={() => onSelectItem('CUSTOM', 0, 0)}
+                        className="w-full flex items-center gap-2 p-2 rounded hover:bg-neo-yellow border-2 border-dashed border-gray-300 hover:border-black transition-all"
+                    >
+                        <PencilRuler size={16} />
+                        <span className="text-xs font-medium">Custom Shape</span>
+                    </button>
+                </div>
             </div>
-            <div className="text-[10px] text-gray-400 mt-2 leading-tight">
-                Drag items or click to place. Use Free Shape to draw.
+
+            {/* Footer */}
+            <div className="p-2 border-t border-gray-200">
+                <p className="text-[9px] text-gray-400 leading-tight text-center">
+                    Drag to canvas or click to place at center
+                </p>
             </div>
         </div>
     );

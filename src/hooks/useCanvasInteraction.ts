@@ -1,14 +1,32 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import {
-    Point, Tool, RoomVertex, ShapeType, FurnitureItem, ZoneShape,
-    WallItem, TextItem, FreehandPath, GuideLine, RoomShape
+    Point, Tool, RoomVertex, ShapeType, FurnitureItem,
+    WallItem, GuideLine
 } from '@/lib/types';
 import {
-    distance, getNearestWall, isPointInPolygon, getPolygonBounds
+    distance, getNearestWall, isPointInPolygon
 } from '@/lib/geometry';
+import {
+    SNAP_THRESHOLD,
+    WALL_SNAP_THRESHOLD,
+    DEFAULT_DOOR_WIDTH,
+    DEFAULT_DOOR_HEIGHT,
+    DEFAULT_WINDOW_WIDTH,
+    DEFAULT_WINDOW_HEIGHT,
+    DEFAULT_ROOM_COLOR,
+    DEFAULT_ROOM_OPACITY,
+    DEFAULT_ZONE_COLOR,
+    DEFAULT_ZONE_OPACITY,
+    DEFAULT_TEXT_COLOR,
+    DEFAULT_TEXT_SIZE,
+    DEFAULT_STROKE_COLOR,
+    DEFAULT_STROKE_WIDTH,
+    Z_INDEX
+} from '@/lib/constants';
+import { snapToGrid } from '@/lib/units';
 
 export const useCanvasInteraction = (
     svgRef: React.RefObject<SVGSVGElement | null>,
@@ -20,9 +38,10 @@ export const useCanvasInteraction = (
         tool, setTool,
         selectedIds, setSelected, toggleSelection,
         addShape, addZone, addFurniture, addWallItem, addText, addDrawing,
-        updateShape, updateFurniture, updateZone, updateWallItem, updateText, updateDrawing,
+        updateShape, updateFurniture, updateZone, updateWallItem,
         setShapes, setZones, setFurniture, setWallItems, setTexts,
-        deleteSelected, saveToHistory
+        deleteSelected, saveToHistory,
+        settings
     } = useStore(useShallow(state => ({
         shapes: state.shapes,
         furniture: state.furniture,
@@ -52,21 +71,11 @@ export const useCanvasInteraction = (
         setWallItems: state.setWallItems,
         setTexts: state.setTexts,
         deleteSelected: state.deleteSelected,
-        saveToHistory: state.saveToHistory
+        saveToHistory: state.saveToHistory,
+        settings: state.settings
     })));
 
     const selectedId = selectedIds.length === 1 ? selectedIds[0] : (selectedIds.length > 0 ? selectedIds[selectedIds.length - 1] : null);
-
-    const getItemType = useCallback((id: string) => {
-        if (shapes.some(s => s.id === id)) return 'ROOM';
-        if (zones.some(z => z.id === id)) return 'ZONE';
-        if (furniture.some(f => f.id === id)) return 'FURNITURE';
-        if (wallItems.some(w => w.id === id)) return 'WALL_ITEM';
-        if (texts.some(t => t.id === id)) return 'TEXT';
-        return null; // Drawing not strictly needed for move logic yet
-    }, [shapes, zones, furniture, wallItems, texts]);
-
-    const selectedType = selectedId ? getItemType(selectedId) : null;
 
     // Interaction State
     const [dragStart, setDragStart] = useState<Point | null>(null);
@@ -78,18 +87,20 @@ export const useCanvasInteraction = (
     const [placingCustomFurniture, setPlacingCustomFurniture] = useState(false);
     const [snapLines, setSnapLines] = useState<GuideLine[]>([]);
     const [snapPoint, setSnapPoint] = useState<Point | null>(null);
+    const [isPanning, setIsPanning] = useState(false);
 
     const movingChildrenIds = useRef<string[]>([]);
+    const panStartViewBox = useRef<{ x: number; y: number } | null>(null);
 
     // SVG Point Helper
-    const getSVGPoint = useCallback((e: React.MouseEvent): Point => {
+    const getSVGPoint = useCallback((e: React.MouseEvent | MouseEvent): Point => {
         if (!svgRef.current) return { x: 0, y: 0 };
         const rect = svgRef.current.getBoundingClientRect();
         return {
             x: viewBox.x + (e.clientX - rect.left) * viewBox.width / rect.width,
             y: viewBox.y + (e.clientY - rect.top) * viewBox.height / rect.height
         };
-    }, [viewBox]);
+    }, [viewBox, svgRef]);
 
     // Snapping Logic
     const getSnapTargets = useCallback(() => {
@@ -108,18 +119,27 @@ export const useCanvasInteraction = (
         return { targets };
     }, [shapes, zones, furniture, texts, wallItems]);
 
-    const applySnapping = useCallback((point: Point, threshold = 15) => {
+    const applySnapping = useCallback((point: Point, threshold = SNAP_THRESHOLD) => {
+        // First apply grid snapping if enabled
+        let workingPoint = { ...point };
+        if (settings.gridSnap) {
+            workingPoint = {
+                x: snapToGrid(point.x, settings.gridSize),
+                y: snapToGrid(point.y, settings.gridSize)
+            };
+        }
+
         const { targets } = getSnapTargets();
         const guidelines: GuideLine[] = [];
         let snapP: Point | null = null;
-        let snapped = { ...point };
+        const snapped = { ...workingPoint };
         let minDiffX = threshold, minDiffY = threshold;
         let closestX: number | null = null, closestY: number | null = null;
 
         targets.forEach(t => {
-            const dx = Math.abs(point.x - t.x);
+            const dx = Math.abs(workingPoint.x - t.x);
             if (dx < minDiffX) { minDiffX = dx; closestX = t.x; }
-            const dy = Math.abs(point.y - t.y);
+            const dy = Math.abs(workingPoint.y - t.y);
             if (dy < minDiffY) { minDiffY = dy; closestY = t.y; }
         });
 
@@ -133,15 +153,20 @@ export const useCanvasInteraction = (
         }
         if (closestX !== null || closestY !== null) snapP = { x: snapped.x, y: snapped.y };
 
-        return { point: snapped, guidelines, snapPoint: snapP };
-    }, [getSnapTargets, viewBox]);
+        // If grid snap is on and no object snap found, show grid snap point
+        if (settings.gridSnap && !snapP) {
+            snapP = workingPoint;
+        }
+
+        return { point: settings.gridSnap && !closestX && !closestY ? workingPoint : snapped, guidelines, snapPoint: snapP };
+    }, [getSnapTargets, viewBox, settings.gridSnap, settings.gridSize]);
 
     // Initialization Helpers
     const initRoomCreation = useCallback((start: Point) => {
         const id = uuidv4();
-        const vertices: RoomVertex[] = Array(4).fill(null).map(() => ({ id: uuidv4(), x: start.x, y: start.y, type: 'CORNER' }));
+        const vertices: RoomVertex[] = Array(4).fill(null).map(() => ({ id: uuidv4(), x: start.x, y: start.y, type: 'CORNER' as const }));
         addShape({
-            id, type: ShapeType.POLYGON, vertices, label: `Room ${shapes.length + 1}`, zIndex: 1, color: '#ffffff', opacity: 0.9, wallThickness: 0
+            id, type: ShapeType.POLYGON, vertices, label: `Room ${shapes.length + 1}`, zIndex: Z_INDEX.ROOM, color: DEFAULT_ROOM_COLOR, opacity: DEFAULT_ROOM_OPACITY, wallThickness: 0
         });
         setSelected([id]);
         return id;
@@ -149,41 +174,52 @@ export const useCanvasInteraction = (
 
     const initZoneCreation = useCallback((start: Point) => {
         const id = uuidv4();
-        const vertices: RoomVertex[] = Array(4).fill(null).map(() => ({ id: uuidv4(), x: start.x, y: start.y, type: 'CORNER' }));
-        addZone({ id, vertices, label: `Zone ${zones.length + 1}`, color: '#b9fbc0', opacity: 0.4, zIndex: 10 });
+        const vertices: RoomVertex[] = Array(4).fill(null).map(() => ({ id: uuidv4(), x: start.x, y: start.y, type: 'CORNER' as const }));
+        addZone({ id, vertices, label: `Zone ${zones.length + 1}`, color: DEFAULT_ZONE_COLOR, opacity: DEFAULT_ZONE_OPACITY, zIndex: Z_INDEX.ZONE });
         setSelected([id]);
         return id;
     }, [zones.length, addZone, setSelected]);
 
     const initFurnitureCreation = useCallback((start: Point) => {
         const id = uuidv4();
-        const vertices: RoomVertex[] = Array(4).fill(null).map(() => ({ id: uuidv4(), x: start.x, y: start.y, type: 'CORNER' }));
-        addFurniture({ id, type: 'CUSTOM', x: start.x, y: start.y, width: 0, height: 0, rotation: 0, vertices, zIndex: 2 });
+        const vertices: RoomVertex[] = Array(4).fill(null).map(() => ({ id: uuidv4(), x: start.x, y: start.y, type: 'CORNER' as const }));
+        addFurniture({ id, type: 'CUSTOM', x: start.x, y: start.y, width: 0, height: 0, rotation: 0, vertices, zIndex: Z_INDEX.FURNITURE });
         setSelected([id]);
     }, [addFurniture, setSelected]);
 
     const createText = useCallback((center: Point) => {
-        addText({ id: uuidv4(), x: center.x, y: center.y, text: 'New Text', fontSize: 16, color: '#1a1a1a', rotation: 0, zIndex: 3 });
-    }, [addText]);
+        addText({ id: uuidv4(), x: center.x, y: center.y, text: 'New Text', fontSize: DEFAULT_TEXT_SIZE, color: DEFAULT_TEXT_COLOR, rotation: 0, zIndex: Z_INDEX.TEXT });
+        setTool(Tool.SELECT);
+    }, [addText, setTool]);
 
     const createWallItem = useCallback((center: Point, type: 'DOOR' | 'WINDOW') => {
         if (ghostWallItem && ghostWallItem.type === type) {
             addWallItem({ ...ghostWallItem, id: uuidv4() });
             return;
         }
-        const match = getNearestWall(center, shapes, 30);
+        const match = getNearestWall(center, shapes, WALL_SNAP_THRESHOLD);
         if (!match) return;
         addWallItem({
             id: uuidv4(), type, x: match.point.x, y: match.point.y,
-            width: type === 'DOOR' ? 80 : 120, height: 20, rotation: match.angle, attachedTo: match.shapeId, zIndex: 2
+            width: type === 'DOOR' ? DEFAULT_DOOR_WIDTH : DEFAULT_WINDOW_WIDTH,
+            height: type === 'DOOR' ? DEFAULT_DOOR_HEIGHT : DEFAULT_WINDOW_HEIGHT,
+            rotation: match.angle, attachedTo: match.shapeId, zIndex: Z_INDEX.WALL_ITEM
         });
     }, [shapes, ghostWallItem, addWallItem]);
-
 
     // Handlers
     const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
         const point = getSVGPoint(e);
         setHasDragged(false);
+
+        // Pan tool
+        if (tool === Tool.PAN) {
+            setDragStart(point);
+            setDragAction('PANNING');
+            setIsPanning(true);
+            panStartViewBox.current = { x: viewBox.x, y: viewBox.y };
+            return;
+        }
 
         if (tool === Tool.FURNITURE && placingCustomFurniture) {
             initFurnitureCreation(point);
@@ -214,14 +250,13 @@ export const useCanvasInteraction = (
             setDragAction('CREATING_ZONE');
             return;
         }
-        if (tool === Tool.PAN) { setDragStart(point); return; }
         if (tool === Tool.SELECT) {
             if (!e.shiftKey) { setSelected([]); movingChildrenIds.current = []; }
             setDragStart(point);
             setSelectionBox({ start: point, end: point });
             setDragAction('SELECTING_MARQUEE');
         }
-    }, [tool, getSVGPoint, initFurnitureCreation, placingCustomFurniture, initRoomCreation, initZoneCreation, createText, createWallItem, setSelected]);
+    }, [tool, getSVGPoint, initFurnitureCreation, placingCustomFurniture, initRoomCreation, initZoneCreation, createText, createWallItem, setSelected, viewBox.x, viewBox.y]);
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
         const rawPoint = getSVGPoint(e);
@@ -229,11 +264,13 @@ export const useCanvasInteraction = (
         if (!dragStart) {
             setSnapLines([]); setSnapPoint(null);
             if (tool === Tool.DOOR || tool === Tool.WINDOW) {
-                const match = getNearestWall(rawPoint, shapes, 30);
+                const match = getNearestWall(rawPoint, shapes, WALL_SNAP_THRESHOLD);
                 if (match) {
                     setGhostWallItem({
                         id: 'ghost', type: tool === Tool.DOOR ? 'DOOR' : 'WINDOW',
-                        x: match.point.x, y: match.point.y, width: tool === Tool.DOOR ? 80 : 120, height: 20,
+                        x: match.point.x, y: match.point.y,
+                        width: tool === Tool.DOOR ? DEFAULT_DOOR_WIDTH : DEFAULT_WINDOW_WIDTH,
+                        height: tool === Tool.DOOR ? DEFAULT_DOOR_HEIGHT : DEFAULT_WINDOW_HEIGHT,
                         rotation: match.angle, attachedTo: match.shapeId, zIndex: 10
                     });
                 } else setGhostWallItem(null);
@@ -242,6 +279,20 @@ export const useCanvasInteraction = (
         }
 
         if (ghostWallItem) setGhostWallItem(null);
+
+        // Handle panning
+        if (dragAction === 'PANNING' && panStartViewBox.current) {
+            const dx = (e.clientX - (svgRef.current?.getBoundingClientRect().left || 0)) * viewBox.width / (svgRef.current?.getBoundingClientRect().width || 1);
+            const dy = (e.clientY - (svgRef.current?.getBoundingClientRect().top || 0)) * viewBox.height / (svgRef.current?.getBoundingClientRect().height || 1);
+            const startDx = (dragStart.x - panStartViewBox.current.x);
+            const startDy = (dragStart.y - panStartViewBox.current.y);
+            setViewBox(prev => ({
+                ...prev,
+                x: panStartViewBox.current!.x + startDx - dx,
+                y: panStartViewBox.current!.y + startDy - dy
+            }));
+            return;
+        }
 
         const shouldSnap = dragAction && (dragAction.startsWith('MOVE_') && !dragAction.includes('VERTEX'));
         const { point, guidelines, snapPoint: currentSnapPoint } = shouldSnap ? applySnapping(rawPoint) : { point: rawPoint, guidelines: [], snapPoint: null };
@@ -253,13 +304,7 @@ export const useCanvasInteraction = (
 
         if (dragAction === 'DRAWING_FREEHAND') {
             setPendingDrawing(prev => [...prev, point]);
-        } else if (dragAction === 'PANNING') {
-            const dx = point.x - dragStart.x;
-            const dy = point.y - dragStart.y;
-            setViewBox(prev => ({ ...prev, x: prev.x - dx, y: prev.y - dy }));
         } else if (dragAction === 'CREATING_SHAPE' && selectedId) {
-            // Find existing logic for creating shape (drag corner)
-            // Re-implementing simplified logic here for brevity, matching Canvas.tsx
             const minX = Math.min(dragStart.x, point.x);
             const maxX = Math.max(dragStart.x, point.x);
             const minY = Math.min(dragStart.y, point.y);
@@ -321,14 +366,12 @@ export const useCanvasInteraction = (
             const dx = point.x - dragStart.x;
             const dy = point.y - dragStart.y;
 
-            // Batch updates for performance? Or just simple map.
             if (shapes.some(s => selectedIds.includes(s.id))) {
                 setShapes(shapes.map(s => selectedIds.includes(s.id) ? { ...s, vertices: s.vertices.map(v => ({ ...v, x: v.x + dx, y: v.y + dy })) } : s));
             }
             if (zones.some(z => selectedIds.includes(z.id))) {
                 setZones(zones.map(z => selectedIds.includes(z.id) ? { ...z, vertices: z.vertices.map(v => ({ ...v, x: v.x + dx, y: v.y + dy })) } : z));
             }
-            // Furniture + Siblings
             const moving = [...selectedIds, ...movingChildrenIds.current];
             if (furniture.some(f => moving.includes(f.id))) {
                 setFurniture(furniture.map(f => moving.includes(f.id) ? { ...f, x: f.x + dx, y: f.y + dy } : f));
@@ -343,7 +386,6 @@ export const useCanvasInteraction = (
         } else if (dragAction && dragAction.startsWith('MOVE_VERTEX_')) {
             const vertexId = dragAction.replace('MOVE_VERTEX_', '');
 
-            // Check Shapes
             const shapeIndex = shapes.findIndex(s => s.vertices.some(v => v.id === vertexId));
             if (shapeIndex >= 0) {
                 const shape = shapes[shapeIndex];
@@ -352,7 +394,6 @@ export const useCanvasInteraction = (
                 return;
             }
 
-            // Check Zones
             const zoneIndex = zones.findIndex(z => z.vertices.some(v => v.id === vertexId));
             if (zoneIndex >= 0) {
                 const zone = zones[zoneIndex];
@@ -378,20 +419,26 @@ export const useCanvasInteraction = (
         } else if (dragAction === 'SELECTING_MARQUEE' && selectionBox) {
             setSelectionBox({ ...selectionBox, end: point });
         }
-        // Note: VERTEX move, ROTATE, RESIZE logic omitted for brevity in this initial port, can be added or kept in Canvas.
-        // Ideally should be here.
     }, [
         dragStart, dragAction, selectedId, selectedIds, getSVGPoint, tool, ghostWallItem, shapes, zones, furniture, wallItems, texts,
-        setViewBox, applySnapping, selectionBox, setShapes, setZones, setFurniture, setWallItems, setTexts, updateFurniture, updateWallItem
+        setViewBox, applySnapping, selectionBox, setShapes, setZones, setFurniture, setWallItems, setTexts, updateFurniture, updateWallItem, updateShape, updateZone, svgRef, viewBox.width, viewBox.height
     ]);
 
     const handleMouseUp = useCallback((e: React.MouseEvent) => {
-        if (!dragStart) return;
-        if (dragAction === 'PANNING') { setDragStart(null); setDragAction(null); return; }
+        if (!dragStart && !isPanning) return;
+
+        if (dragAction === 'PANNING') {
+            setDragStart(null);
+            setDragAction(null);
+            setIsPanning(false);
+            panStartViewBox.current = null;
+            return;
+        }
 
         if (dragAction === 'DRAWING_FREEHAND' && pendingDrawing.length > 1) {
-            addDrawing({ id: uuidv4(), points: [...pendingDrawing], strokeColor: '#1a1a1a', strokeWidth: 2, zIndex: 1 });
+            addDrawing({ id: uuidv4(), points: [...pendingDrawing], strokeColor: DEFAULT_STROKE_COLOR, strokeWidth: DEFAULT_STROKE_WIDTH, zIndex: Z_INDEX.ROOM });
             setGhostWallItem(null);
+            setTool(Tool.SELECT);
         } else if (dragAction === 'CREATING_SHAPE' || dragAction === 'CREATING_ZONE' || dragAction === 'CREATING_FURNITURE_CUSTOM') {
             const currentPoint = getSVGPoint(e);
             if (selectedId && (!hasDragged || (dragStart && distance(dragStart, currentPoint) < 10))) {
@@ -419,6 +466,8 @@ export const useCanvasInteraction = (
             } else {
                 setSelected([]);
             }
+        } else if (hasDragged && dragAction && dragAction.startsWith('MOVE_')) {
+            saveToHistory();
         }
 
         setDragStart(null);
@@ -426,13 +475,14 @@ export const useCanvasInteraction = (
         setSelectionBox(null);
         setPendingDrawing([]);
         setHasDragged(false);
-        saveToHistory();
-    }, [dragStart, dragAction, pendingDrawing, selectionBox, shapes, zones, furniture, wallItems, texts, getSVGPoint, selectedId, hasDragged, saveToHistory, addDrawing, deleteSelected, setTool, setSelected]);
+        setIsPanning(false);
+        panStartViewBox.current = null;
+    }, [dragStart, dragAction, pendingDrawing, selectionBox, shapes, zones, furniture, wallItems, texts, getSVGPoint, selectedId, hasDragged, saveToHistory, addDrawing, deleteSelected, setTool, setSelected, isPanning]);
 
     return {
         // State
         snapLines, snapPoint, selectionBox, ghostWallItem, pendingDrawing, placingCustomFurniture,
-        dragStart, dragAction, hasDragged,
+        dragStart, dragAction, hasDragged, isPanning,
         setDragStart, setDragAction, setHasDragged, setPlacingCustomFurniture,
 
         // Methods

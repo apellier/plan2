@@ -1,21 +1,51 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Canvas } from '@/components/Canvas';
 import { Toolbar } from '@/components/Toolbar';
-import { Tool } from '@/lib/types';
+import { SettingsPanel } from '@/components/SettingsPanel';
+import { RoomTemplates } from '@/components/RoomTemplates';
+import { ExportDialog } from '@/components/ExportDialog';
 
 export default function Home() {
-  // Global keyboard shortcuts
-  // TODO: Move this to a proper hook or component, but for now leave it here 
-  // or better yet, move it to Canvas since focus usually on it.
-
-  // Actually, let's keep it here but dispatch to store
+  const [showSettings, setShowSettings] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const [viewBoxCenter, setViewBoxCenter] = useState({ x: 600, y: 400 });
+  const svgRef = useRef<SVGSVGElement>(null);
 
   return (
     <div className="w-screen h-screen overflow-hidden bg-neo-bg text-neo-text">
-      <Toolbar />
-      <Canvas />
+      <Toolbar
+        onOpenSettings={() => setShowSettings(true)}
+        onOpenTemplates={() => setShowTemplates(true)}
+        onOpenExport={() => setShowExport(true)}
+      />
+      <Canvas
+        svgRef={svgRef}
+        onViewBoxChange={(center) => setViewBoxCenter(center)}
+      />
+
+      {/* Settings Panel */}
+      {showSettings && (
+        <SettingsPanel onClose={() => setShowSettings(false)} />
+      )}
+
+      {/* Room Templates */}
+      {showTemplates && (
+        <RoomTemplates
+          onClose={() => setShowTemplates(false)}
+          viewBoxCenter={viewBoxCenter}
+        />
+      )}
+
+      {/* Export Dialog */}
+      {showExport && (
+        <ExportDialog
+          onClose={() => setShowExport(false)}
+          svgRef={svgRef}
+        />
+      )}
     </div>
   );
 }

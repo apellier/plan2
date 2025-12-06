@@ -3,10 +3,13 @@ import { RoomShape, ZoneShape, FurnitureItem, WallItem, TextItem, FreehandPath }
 import { calculatePolygonArea, getPolygonBounds, calculatePolygonPerimeter } from '@/lib/geometry';
 import { FlipHorizontal, FlipVertical, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown } from 'lucide-react';
 
+type ItemType = 'ROOM' | 'ZONE' | 'FURNITURE' | 'WALL_ITEM' | 'TEXT' | 'DRAWING';
+type PropertyValue = string | number | boolean;
+
 interface PropertiesPanelProps {
     selectedItem: RoomShape | ZoneShape | FurnitureItem | WallItem | TextItem | FreehandPath | null;
-    type: 'ROOM' | 'ZONE' | 'FURNITURE' | 'WALL_ITEM' | 'TEXT' | 'DRAWING' | null;
-    onUpdate: (field: string, value: any) => void;
+    type: ItemType | null;
+    onUpdate: (field: string, value: PropertyValue) => void;
     onDelete: () => void;
     onReorder: (id: string, direction: 'FRONT' | 'BACK' | 'FORWARD' | 'BACKWARD') => void;
 }
@@ -18,7 +21,7 @@ const InputGroup = ({ label, children }: { label: string, children?: React.React
     </div>
 );
 
-const NumberInput = ({ label, value, field, onUpdate, step = 1 }: { label: string, value: number, field: string, onUpdate: (f: string, v: any) => void, step?: number }) => (
+const NumberInput = ({ label, value, field, onUpdate, step = 1 }: { label: string, value: number, field: string, onUpdate: (f: string, v: PropertyValue) => void, step?: number }) => (
     <div className="flex items-center gap-2">
         <span className="text-xs font-mono w-4">{label}</span>
         <input

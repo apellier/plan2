@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
-import { RoomShape, ZoneShape, FurnitureItem, WallItem, TextItem, FreehandPath, Tool, AppMode } from './types';
+import { RoomShape, ZoneShape, FurnitureItem, WallItem, TextItem, FreehandPath, Tool, AppMode, Measurement, Point } from './types';
+import { MAX_HISTORY_SIZE, UnitSystem, MetricUnit, ImperialUnit, DEFAULT_UNIT_SYSTEM, DEFAULT_METRIC_UNIT, DEFAULT_IMPERIAL_UNIT, GRID_SIZE } from './constants';
+import { getPolygonBounds } from './geometry';
 
 interface HistoryState {
     shapes: RoomShape[];
@@ -11,6 +13,35 @@ interface HistoryState {
     drawings: FreehandPath[];
 }
 
+type ClipboardItem = {
+    type: 'ROOM';
+    data: RoomShape;
+} | {
+    type: 'ZONE';
+    data: ZoneShape;
+} | {
+    type: 'FURNITURE';
+    data: FurnitureItem;
+} | {
+    type: 'WALL_ITEM';
+    data: WallItem;
+} | {
+    type: 'TEXT';
+    data: TextItem;
+} | {
+    type: 'DRAWING';
+    data: FreehandPath;
+};
+
+interface SettingsState {
+    unitSystem: UnitSystem;
+    metricUnit: MetricUnit;
+    imperialUnit: ImperialUnit;
+    gridSnap: boolean;
+    gridSize: number;
+    showGrid: boolean;
+}
+
 interface AppState {
     // Data State
     shapes: RoomShape[];
@@ -19,13 +50,20 @@ interface AppState {
     wallItems: WallItem[];
     texts: TextItem[];
     drawings: FreehandPath[];
+    measurements: Measurement[];
 
     // Selection State
     selectedIds: string[];
 
+    // Clipboard
+    clipboard: ClipboardItem[];
+
     // View State
     tool: Tool;
     mode: AppMode;
+
+    // Settings State
+    settings: SettingsState;
 
     // History State
     history: HistoryState[];
@@ -37,8 +75,17 @@ interface AppState {
     setTool: (tool: Tool) => void;
     setMode: (mode: AppMode) => void;
 
+    // Settings Actions
+    setUnitSystem: (system: UnitSystem) => void;
+    setMetricUnit: (unit: MetricUnit) => void;
+    setImperialUnit: (unit: ImperialUnit) => void;
+    toggleGridSnap: () => void;
+    setGridSize: (size: number) => void;
+    toggleShowGrid: () => void;
+
     setSelected: (ids: string[]) => void;
     toggleSelection: (id: string, multi: boolean) => void;
+    selectAll: () => void;
 
     // Creation Actions
     addShape: (shape: RoomShape) => void;
@@ -48,7 +95,7 @@ interface AppState {
     addText: (item: TextItem) => void;
     addDrawing: (drawing: FreehandPath) => void;
 
-    // Update Actions
+    // Update Actions (now with history)
     updateShape: (id: string, updates: Partial<RoomShape>) => void;
     updateFurniture: (id: string, updates: Partial<FurnitureItem>) => void;
     updateZone: (id: string, updates: Partial<ZoneShape>) => void;
@@ -56,7 +103,7 @@ interface AppState {
     updateText: (id: string, updates: Partial<TextItem>) => void;
     updateDrawing: (id: string, updates: Partial<FreehandPath>) => void;
 
-    // Bulk Updates
+    // Bulk Updates (for drag operations - no history during drag)
     setShapes: (shapes: RoomShape[]) => void;
     setFurniture: (items: FurnitureItem[]) => void;
     setZones: (zones: ZoneShape[]) => void;
@@ -71,7 +118,105 @@ interface AppState {
     // Delete
     deleteSelected: () => void;
     reorderItem: (id: string, direction: 'FRONT' | 'BACK' | 'FORWARD' | 'BACKWARD') => void;
+
+    // Clipboard Actions
+    copy: () => void;
+    paste: (offset?: { x: number; y: number }) => void;
+    duplicate: () => void;
+
+    // Measurements
+    addMeasurement: (measurement: Measurement) => void;
+    clearMeasurements: () => void;
+
+    // Persistence
+    exportState: () => string;
+    importState: (json: string) => boolean;
+    clearAll: () => void;
 }
+
+// Helper to get item by id
+const getItemById = (state: AppState, id: string): ClipboardItem | null => {
+    const shape = state.shapes.find(s => s.id === id);
+    if (shape) return { type: 'ROOM', data: shape };
+
+    const zone = state.zones.find(z => z.id === id);
+    if (zone) return { type: 'ZONE', data: zone };
+
+    const furniture = state.furniture.find(f => f.id === id);
+    if (furniture) return { type: 'FURNITURE', data: furniture };
+
+    const wallItem = state.wallItems.find(w => w.id === id);
+    if (wallItem) return { type: 'WALL_ITEM', data: wallItem };
+
+    const text = state.texts.find(t => t.id === id);
+    if (text) return { type: 'TEXT', data: text };
+
+    const drawing = state.drawings.find(d => d.id === id);
+    if (drawing) return { type: 'DRAWING', data: drawing };
+
+    return null;
+};
+
+// Helper to clone item with new ID
+const cloneWithNewId = (item: ClipboardItem, offset = { x: 20, y: 20 }): ClipboardItem => {
+    const newId = uuidv4();
+
+    switch (item.type) {
+        case 'ROOM': {
+            const newVertices = item.data.vertices.map(v => ({
+                ...v,
+                id: uuidv4(),
+                x: v.x + offset.x,
+                y: v.y + offset.y
+            }));
+            return {
+                type: 'ROOM',
+                data: { ...item.data, id: newId, vertices: newVertices }
+            };
+        }
+        case 'ZONE': {
+            const newVertices = item.data.vertices.map(v => ({
+                ...v,
+                id: uuidv4(),
+                x: v.x + offset.x,
+                y: v.y + offset.y
+            }));
+            return {
+                type: 'ZONE',
+                data: { ...item.data, id: newId, vertices: newVertices }
+            };
+        }
+        case 'FURNITURE': {
+            const data = { ...item.data, id: newId, x: item.data.x + offset.x, y: item.data.y + offset.y };
+            if (data.vertices) {
+                data.vertices = data.vertices.map(v => ({
+                    ...v,
+                    id: uuidv4(),
+                    x: v.x + offset.x,
+                    y: v.y + offset.y
+                }));
+            }
+            return { type: 'FURNITURE', data };
+        }
+        case 'WALL_ITEM':
+            return {
+                type: 'WALL_ITEM',
+                data: { ...item.data, id: newId, x: item.data.x + offset.x, y: item.data.y + offset.y }
+            };
+        case 'TEXT':
+            return {
+                type: 'TEXT',
+                data: { ...item.data, id: newId, x: item.data.x + offset.x, y: item.data.y + offset.y }
+            };
+        case 'DRAWING': {
+            const newPoints = item.data.points.map(p => ({ x: p.x + offset.x, y: p.y + offset.y }));
+            return {
+                type: 'DRAWING',
+                data: { ...item.data, id: newId, points: newPoints }
+            };
+        }
+    }
+};
 
 export const useStore = create<AppState>((set, get) => ({
     // Initial State
@@ -81,11 +226,22 @@ export const useStore = create<AppState>((set, get) => ({
     wallItems: [],
     texts: [],
     drawings: [],
+    measurements: [],
 
     selectedIds: [],
+    clipboard: [],
 
     tool: Tool.SELECT,
     mode: AppMode.IDLE,
+
+    settings: {
+        unitSystem: DEFAULT_UNIT_SYSTEM,
+        metricUnit: DEFAULT_METRIC_UNIT,
+        imperialUnit: DEFAULT_IMPERIAL_UNIT,
+        gridSnap: true,
+        gridSize: GRID_SIZE,
+        showGrid: true,
+    },
 
     history: [],
     historyIndex: -1,
@@ -93,8 +249,28 @@ export const useStore = create<AppState>((set, get) => ({
     canRedo: false,
 
     // Actions
-    setTool: (tool) => set({ tool }),
+    setTool: (tool) => set({ tool, mode: AppMode.IDLE }),
     setMode: (mode) => set({ mode }),
+
+    // Settings Actions
+    setUnitSystem: (unitSystem) => set((state) => ({
+        settings: { ...state.settings, unitSystem }
+    })),
+    setMetricUnit: (metricUnit) => set((state) => ({
+        settings: { ...state.settings, metricUnit }
+    })),
+    setImperialUnit: (imperialUnit) => set((state) => ({
+        settings: { ...state.settings, imperialUnit }
+    })),
+    toggleGridSnap: () => set((state) => ({
+        settings: { ...state.settings, gridSnap: !state.settings.gridSnap }
+    })),
+    setGridSize: (gridSize) => set((state) => ({
+        settings: { ...state.settings, gridSize }
+    })),
+    toggleShowGrid: () => set((state) => ({
+        settings: { ...state.settings, showGrid: !state.settings.showGrid }
+    })),
 
     setSelected: (ids) => set({ selectedIds: ids }),
 
@@ -106,6 +282,17 @@ export const useStore = create<AppState>((set, get) => ({
                 : [...state.selectedIds, id]
         };
     }),
+
+    selectAll: () => set((state) => ({
+        selectedIds: [
+            ...state.shapes.map(s => s.id),
+            ...state.zones.map(z => z.id),
+            ...state.furniture.map(f => f.id),
+            ...state.wallItems.map(w => w.id),
+            ...state.texts.map(t => t.id),
+            ...state.drawings.map(d => d.id)
+        ]
+    })),
 
     addShape: (shape) => {
         set((state) => ({ shapes: [...state.shapes, shape] }));
@@ -132,26 +319,45 @@ export const useStore = create<AppState>((set, get) => ({
         get().saveToHistory();
     },
 
-    updateShape: (id, updates) => set((state) => ({
-        shapes: state.shapes.map(s => s.id === id ? { ...s, ...updates } : s)
-    })),
-    updateFurniture: (id, updates) => set((state) => ({
-        furniture: state.furniture.map(f => f.id === id ? { ...f, ...updates } : f)
-    })),
-    updateZone: (id, updates) => set((state) => ({
-        zones: state.zones.map(z => z.id === id ? { ...z, ...updates } : z)
-    })),
-    updateWallItem: (id, updates) => set((state) => ({
-        wallItems: state.wallItems.map(w => w.id === id ? { ...w, ...updates } : w)
-    })),
-    updateText: (id, updates) => set((state) => ({
-        texts: state.texts.map(t => t.id === id ? { ...t, ...updates } : t)
-    })),
-    updateDrawing: (id, updates) => set((state) => ({
-        drawings: state.drawings.map(d => d.id === id ? { ...d, ...updates } : d)
-    })),
+    // Update actions now save to history
+    updateShape: (id, updates) => {
+        set((state) => ({
+            shapes: state.shapes.map(s => s.id === id ? { ...s, ...updates } : s)
+        }));
+        get().saveToHistory();
+    },
+    updateFurniture: (id, updates) => {
+        set((state) => ({
+            furniture: state.furniture.map(f => f.id === id ? { ...f, ...updates } : f)
+        }));
+        get().saveToHistory();
+    },
+    updateZone: (id, updates) => {
+        set((state) => ({
+            zones: state.zones.map(z => z.id === id ? { ...z, ...updates } : z)
+        }));
+        get().saveToHistory();
+    },
+    updateWallItem: (id, updates) => {
+        set((state) => ({
+            wallItems: state.wallItems.map(w => w.id === id ? { ...w, ...updates } : w)
+        }));
+        get().saveToHistory();
+    },
+    updateText: (id, updates) => {
+        set((state) => ({
+            texts: state.texts.map(t => t.id === id ? { ...t, ...updates } : t)
+        }));
+        get().saveToHistory();
+    },
+    updateDrawing: (id, updates) => {
+        set((state) => ({
+            drawings: state.drawings.map(d => d.id === id ? { ...d, ...updates } : d)
+        }));
+        get().saveToHistory();
+    },
 
-    // Setters for drag operations
+    // Setters for drag operations (no history during drag)
     setShapes: (shapes) => set({ shapes }),
     setFurniture: (furniture) => set({ furniture }),
     setZones: (zones) => set({ zones }),
@@ -161,18 +367,18 @@ export const useStore = create<AppState>((set, get) => ({
     saveToHistory: () => {
         const state = get();
         const historyItem: HistoryState = {
-            shapes: state.shapes,
-            furniture: state.furniture,
-            zones: state.zones,
-            wallItems: state.wallItems,
-            texts: state.texts,
-            drawings: state.drawings
+            shapes: JSON.parse(JSON.stringify(state.shapes)),
+            furniture: JSON.parse(JSON.stringify(state.furniture)),
+            zones: JSON.parse(JSON.stringify(state.zones)),
+            wallItems: JSON.parse(JSON.stringify(state.wallItems)),
+            texts: JSON.parse(JSON.stringify(state.texts)),
+            drawings: JSON.parse(JSON.stringify(state.drawings))
         };
 
         const newHistory = state.history.slice(0, state.historyIndex + 1);
         newHistory.push(historyItem);
 
-        if (newHistory.length > 50) newHistory.shift();
+        if (newHistory.length > MAX_HISTORY_SIZE) newHistory.shift();
 
         set({
             history: newHistory,
@@ -191,7 +397,7 @@ export const useStore = create<AppState>((set, get) => ({
                 historyIndex: historyIndex - 1,
                 canUndo: historyIndex - 1 > 0,
                 canRedo: true,
-                selectedIds: [] // Clear selection on undo/redo to avoid ghost selections
+                selectedIds: []
             });
         }
     },
@@ -231,14 +437,13 @@ export const useStore = create<AppState>((set, get) => ({
         const state = get();
         const { saveToHistory } = state;
 
-        // Helper to reorder array
         const reorder = <T extends { id: string }>(list: T[]): T[] | null => {
             const index = list.findIndex(item => item.id === id);
-            if (index === -1) return null; // Not in this list
+            if (index === -1) return null;
 
             const newList = [...list];
             const item = newList[index];
-            newList.splice(index, 1); // Remove
+            newList.splice(index, 1);
 
             if (direction === 'FRONT') {
                 newList.push(item);
@@ -254,7 +459,6 @@ export const useStore = create<AppState>((set, get) => ({
             return newList;
         };
 
-        // Try strictly one list at a time
         const newShapes = reorder(state.shapes);
         if (newShapes) { set({ shapes: newShapes }); saveToHistory(); return; }
 
@@ -272,5 +476,165 @@ export const useStore = create<AppState>((set, get) => ({
 
         const newDrawings = reorder(state.drawings);
         if (newDrawings) { set({ drawings: newDrawings }); saveToHistory(); return; }
+    },
+
+    // Clipboard operations
+    copy: () => {
+        const state = get();
+        const items: ClipboardItem[] = [];
+
+        state.selectedIds.forEach(id => {
+            const item = getItemById(state, id);
+            if (item) items.push(item);
+        });
+
+        set({ clipboard: items });
+    },
+
+    paste: (offset = { x: 20, y: 20 }) => {
+        const state = get();
+        const newIds: string[] = [];
+
+        state.clipboard.forEach(item => {
+            const cloned = cloneWithNewId(item, offset);
+            newIds.push(cloned.data.id);
+
+            switch (cloned.type) {
+                case 'ROOM':
+                    set(s => ({ shapes: [...s.shapes, cloned.data] }));
+                    break;
+                case 'ZONE':
+                    set(s => ({ zones: [...s.zones, cloned.data] }));
+                    break;
+                case 'FURNITURE':
+                    set(s => ({ furniture: [...s.furniture, cloned.data] }));
+                    break;
+                case 'WALL_ITEM':
+                    set(s => ({ wallItems: [...s.wallItems, cloned.data] }));
+                    break;
+                case 'TEXT':
+                    set(s => ({ texts: [...s.texts, cloned.data] }));
+                    break;
+                case 'DRAWING':
+                    set(s => ({ drawings: [...s.drawings, cloned.data] }));
+                    break;
+            }
+        });
+
+        set({ selectedIds: newIds });
+        get().saveToHistory();
+    },
+
+    duplicate: () => {
+        const state = get();
+        const newIds: string[] = [];
+
+        state.selectedIds.forEach(id => {
+            const item = getItemById(state, id);
+            if (!item) return;
+
+            const cloned = cloneWithNewId(item);
+            newIds.push(cloned.data.id);
+
+            switch (cloned.type) {
+                case 'ROOM':
+                    set(s => ({ shapes: [...s.shapes, cloned.data] }));
+                    break;
+                case 'ZONE':
+                    set(s => ({ zones: [...s.zones, cloned.data] }));
+                    break;
+                case 'FURNITURE':
+                    set(s => ({ furniture: [...s.furniture, cloned.data] }));
+                    break;
+                case 'WALL_ITEM':
+                    set(s => ({ wallItems: [...s.wallItems, cloned.data] }));
+                    break;
+                case 'TEXT':
+                    set(s => ({ texts: [...s.texts, cloned.data] }));
+                    break;
+                case 'DRAWING':
+                    set(s => ({ drawings: [...s.drawings, cloned.data] }));
+                    break;
+            }
+        });
+
+        set({ selectedIds: newIds });
+        get().saveToHistory();
+    },
+
+    // Measurements
+    addMeasurement: (measurement) => set((state) => ({
+        measurements: [...state.measurements, measurement]
+    })),
+    clearMeasurements: () => set({ measurements: [] }),
+
+    // Persistence
+    exportState: () => {
+        const state = get();
+        return JSON.stringify({
+            version: '1.1',
+            shapes: state.shapes,
+            furniture: state.furniture,
+            zones: state.zones,
+            wallItems: state.wallItems,
+            texts: state.texts,
+            drawings: state.drawings,
+            settings: state.settings
+        }, null, 2);
+    },
+
+    importState: (json: string) => {
+        try {
+            const data = JSON.parse(json);
+            if (!data.version) return false;
+
+            const newState: Partial<AppState> = {
+                shapes: data.shapes || [],
+                furniture: data.furniture || [],
+                zones: data.zones || [],
+                wallItems: data.wallItems || [],
+                texts: data.texts || [],
+                drawings: data.drawings || [],
+                measurements: [],
+                selectedIds: [],
+                history: [],
+                historyIndex: -1,
+                canUndo: false,
+                canRedo: false
+            };
+
+            // Import settings if available
+            if (data.settings) {
+                newState.settings = {
+                    unitSystem: data.settings.unitSystem || DEFAULT_UNIT_SYSTEM,
+                    metricUnit: data.settings.metricUnit || DEFAULT_METRIC_UNIT,
+                    imperialUnit: data.settings.imperialUnit || DEFAULT_IMPERIAL_UNIT,
+                    gridSnap: data.settings.gridSnap ?? true,
+                    gridSize: data.settings.gridSize || GRID_SIZE,
+                    showGrid: data.settings.showGrid ?? true,
+                };
+            }
+
+            set(newState);
+            get().saveToHistory();
+            return true;
+        } catch {
+            return false;
+        }
+    },
+
+    clearAll: () => {
+        set({
+            shapes: [],
+            furniture: [],
+            zones: [],
+            wallItems: [],
+            texts: [],
+            drawings: [],
+            measurements: [],
+            selectedIds: [],
+            clipboard: []
+        });
+        get().saveToHistory();
     }
 }));

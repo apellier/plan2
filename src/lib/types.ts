@@ -13,6 +13,7 @@ export enum Tool {
   WINDOW = 'WINDOW',
   PENCIL = 'PENCIL',
   TEXT = 'TEXT',
+  MEASURE = 'MEASURE',
 }
 
 export interface GuideLine {
@@ -26,12 +27,12 @@ export enum ShapeType {
   POLYGON = 'POLYGON',
 }
 
-export type VertexType = 'CORNER' | 'FILLET'; // Chamfer removed
+export type VertexType = 'CORNER' | 'FILLET';
 
 export interface RoomVertex extends Point {
   id: string;
   type: VertexType;
-  radius?: number; // For fillet size
+  radius?: number;
 }
 
 export interface RoomShape {
@@ -56,19 +57,60 @@ export interface ZoneShape {
   rotation?: number;
 }
 
-export type FurnitureType = 'BED_QUEEN' | 'SOFA_3SEATER' | 'TABLE_DINING' | 'CHAIR_OFFICE' | 'PLANT' | 'CUSTOM';
+// Expanded furniture types
+export type FurnitureType =
+  // Bedroom
+  | 'BED_SINGLE'
+  | 'BED_QUEEN'
+  | 'BED_KING'
+  | 'WARDROBE'
+  | 'NIGHTSTAND'
+  | 'DRESSER'
+  // Living Room
+  | 'SOFA_2SEATER'
+  | 'SOFA_3SEATER'
+  | 'SOFA_CORNER'
+  | 'ARMCHAIR'
+  | 'COFFEE_TABLE'
+  | 'TV_STAND'
+  | 'BOOKSHELF'
+  // Dining
+  | 'TABLE_DINING'
+  | 'TABLE_ROUND'
+  | 'CHAIR_DINING'
+  // Office
+  | 'DESK'
+  | 'CHAIR_OFFICE'
+  | 'FILING_CABINET'
+  // Bathroom
+  | 'BATHTUB'
+  | 'SHOWER'
+  | 'TOILET'
+  | 'SINK_BATHROOM'
+  // Kitchen
+  | 'SINK_KITCHEN'
+  | 'STOVE'
+  | 'FRIDGE'
+  | 'DISHWASHER'
+  | 'COUNTER'
+  // Outdoor
+  | 'PLANT'
+  | 'PLANT_LARGE'
+  // Custom
+  | 'CUSTOM';
 
 export interface FurnitureItem {
   id: string;
   type: FurnitureType;
   x: number;
   y: number;
-  rotation: number; // Degrees
+  rotation: number;
   width: number;
   height: number;
   vertices?: RoomVertex[];
-  color?: string; // Optional override
+  color?: string;
   zIndex?: number;
+  label?: string;
 }
 
 export type WallItemType = 'DOOR' | 'WINDOW';
@@ -107,6 +149,14 @@ export interface FreehandPath {
   zIndex?: number;
 }
 
+// Measurement for the measure tool
+export interface Measurement {
+  id: string;
+  start: Point;
+  end: Point;
+  distance: number;
+}
+
 export enum AppMode {
   IDLE = 'IDLE',
   DRAWING = 'DRAWING',
@@ -118,4 +168,5 @@ export enum AppMode {
   PLACING_FURNITURE = 'PLACING_FURNITURE',
   PLACING_WALL_ITEM = 'PLACING_WALL_ITEM',
   PANNING = 'PANNING',
+  MEASURING = 'MEASURING',
 }
