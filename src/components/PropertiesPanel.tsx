@@ -2,6 +2,9 @@ import React from 'react';
 import { RoomShape, ZoneShape, FurnitureItem, WallItem, TextItem, FreehandPath } from '@/lib/types';
 import { calculatePolygonArea, getPolygonBounds, calculatePolygonPerimeter } from '@/lib/geometry';
 import { FlipHorizontal, FlipVertical, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown } from 'lucide-react';
+import { useDeviceType } from '@/hooks/useDeviceType';
+import { BottomSheet } from './mobile/BottomSheet';
+import { NudgeControls } from './mobile/NudgeControls';
 
 type ItemType = 'ROOM' | 'ZONE' | 'FURNITURE' | 'WALL_ITEM' | 'TEXT' | 'DRAWING';
 type PropertyValue = string | number | boolean;
@@ -30,6 +33,7 @@ interface PropertiesPanelProps {
     onUpdate: (field: string, value: PropertyValue) => void;
     onDelete: () => void;
     onReorder: (id: string, direction: 'FRONT' | 'BACK' | 'FORWARD' | 'BACKWARD') => void;
+    onNudge?: (dx: number, dy: number) => void;
 }
 
 const InputGroup = ({ label, children }: { label: string, children?: React.ReactNode }) => (
@@ -55,7 +59,10 @@ const NumberInput = ({ label, value, field, onUpdate, step = 1 }: { label: strin
     </div>
 );
 
-export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedItem, type, onUpdate, onDelete, onReorder }) => {
+export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedItem, type, onUpdate, onDelete, onReorder, onNudge }) => {
+    const { isMobile, isTablet } = useDeviceType();
+    const isMobileLayout = isMobile || isTablet;
+
     if (!selectedItem || !type) return null;
 
     // Calculate generic properties based on type
@@ -116,12 +123,20 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedItem, 
     const areaSqm = (area / 10000).toFixed(2);
     const perimeterM = (perimeter / 100).toFixed(2);
 
-    return (
-        <div className="fixed right-6 top-6 bottom-6 w-64 bg-white border-2 border-black shadow-[var(--shadow-hard)] rounded-xl p-4 flex flex-col gap-4 overflow-y-auto pointer-events-auto z-50">
-            <div className="pb-3 border-b-2 border-black">
+    // Shared panel content
+    const panelContent = (
+        <>
+            <div className={isMobileLayout ? "pb-2 border-b border-gray-200" : "pb-3 border-b-2 border-black"}>
                 <h2 className="font-bold text-sm bg-neo-yellow inline-block px-1 border border-black rounded">PROPERTIES</h2>
                 <div className="text-[10px] text-gray-500 font-mono mt-1">{type} // {selectedItem.id.slice(0, 4)}</div>
             </div>
+
+            {/* Nudge Controls for mobile */}
+            {isMobileLayout && onNudge && (type === 'FURNITURE' || type === 'ROOM' || type === 'ZONE') && (
+                <div className="flex justify-center py-2">
+                    <NudgeControls onNudge={onNudge} step={1} />
+                </div>
+            )}
 
             {type === 'TEXT' && (
                 <InputGroup label="Content">
@@ -266,36 +281,64 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedItem, 
                     )}
                 </div>
             )}
-            {/* ACTIONS */}
-            <InputGroup label="Arrange">
-                <div className="flex gap-1 justify-between">
-                    <button onClick={() => onReorder(selectedItem.id, 'BACK')} className="flex-1 flex flex-col items-center p-1 border border-gray-200 rounded hover:bg-gray-100" title="Send to Back">
-                        <ChevronsDown size={14} />
-                        <span className="text-[8px] mt-0.5">Back</span>
-                    </button>
-                    <button onClick={() => onReorder(selectedItem.id, 'BACKWARD')} className="flex-1 flex flex-col items-center p-1 border border-gray-200 rounded hover:bg-gray-100" title="Send Backward">
-                        <ArrowDown size={14} />
-                        <span className="text-[8px] mt-0.5">Down</span>
-                    </button>
-                    <button onClick={() => onReorder(selectedItem.id, 'FORWARD')} className="flex-1 flex flex-col items-center p-1 border border-gray-200 rounded hover:bg-gray-100" title="Bring Forward">
-                        <ArrowUp size={14} />
-                        <span className="text-[8px] mt-0.5">Up</span>
-                    </button>
-                    <button onClick={() => onReorder(selectedItem.id, 'FRONT')} className="flex-1 flex flex-col items-center p-1 border border-gray-200 rounded hover:bg-gray-100" title="Bring to Front">
-                        <ChevronsUp size={14} />
-                        <span className="text-[8px] mt-0.5">Front</span>
-                    </button>
-                </div>
-            </InputGroup>
 
-            <div className="mt-4 pt-4 border-t border-gray-200">
-                <button
-                    onClick={onDelete}
-                    className="w-full bg-red-50 text-red-600 border border-red-200 rounded px-2 py-1 text-xs font-bold hover:bg-red-100 transition-colors"
-                >
-                    DELETE OBJECT
-                </button>
-            </div>
+            {/* ACTIONS - Hide on mobile (use ContextualActionBar instead) */}
+            {!isMobileLayout && (
+                <>
+                    <InputGroup label="Arrange">
+                        <div className="flex gap-1 justify-between">
+                            <button onClick={() => onReorder(selectedItem.id, 'BACK')} className="flex-1 flex flex-col items-center p-1 border border-gray-200 rounded hover:bg-gray-100" title="Send to Back">
+                                <ChevronsDown size={14} />
+                                <span className="text-[8px] mt-0.5">Back</span>
+                            </button>
+                            <button onClick={() => onReorder(selectedItem.id, 'BACKWARD')} className="flex-1 flex flex-col items-center p-1 border border-gray-200 rounded hover:bg-gray-100" title="Send Backward">
+                                <ArrowDown size={14} />
+                                <span className="text-[8px] mt-0.5">Down</span>
+                            </button>
+                            <button onClick={() => onReorder(selectedItem.id, 'FORWARD')} className="flex-1 flex flex-col items-center p-1 border border-gray-200 rounded hover:bg-gray-100" title="Bring Forward">
+                                <ArrowUp size={14} />
+                                <span className="text-[8px] mt-0.5">Up</span>
+                            </button>
+                            <button onClick={() => onReorder(selectedItem.id, 'FRONT')} className="flex-1 flex flex-col items-center p-1 border border-gray-200 rounded hover:bg-gray-100" title="Bring to Front">
+                                <ChevronsUp size={14} />
+                                <span className="text-[8px] mt-0.5">Front</span>
+                            </button>
+                        </div>
+                    </InputGroup>
+
+                    <div className="mt-4 pt-4 border-t border-gray-200">
+                        <button
+                            onClick={onDelete}
+                            className="w-full bg-red-50 text-red-600 border border-red-200 rounded px-2 py-1 text-xs font-bold hover:bg-red-100 transition-colors"
+                        >
+                            DELETE OBJECT
+                        </button>
+                    </div>
+                </>
+            )}
+        </>
+    );
+
+    // Mobile: Use BottomSheet
+    if (isMobileLayout) {
+        return (
+            <BottomSheet
+                isOpen={true}
+                title={`${type} Properties`}
+                collapsedHeight={120}
+                expandedHeight="50vh"
+            >
+                <div className="flex flex-col gap-3">
+                    {panelContent}
+                </div>
+            </BottomSheet>
+        );
+    }
+
+    // Desktop: Fixed sidebar
+    return (
+        <div className="fixed right-6 top-6 bottom-6 w-64 bg-white border-2 border-black shadow-[var(--shadow-hard)] rounded-xl p-4 flex flex-col gap-4 overflow-y-auto pointer-events-auto z-50">
+            {panelContent}
         </div>
     );
 };

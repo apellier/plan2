@@ -4,6 +4,8 @@ import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, f
 import { v4 as uuidv4 } from 'uuid';
 import { useCanvasInteraction } from '@/hooks/useCanvasInteraction';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useTouchGestures } from '@/hooks/useTouchGestures';
+import { useDeviceType } from '@/hooks/useDeviceType';
 import { Tool, AppMode, FurnitureType, RoomVertex, Point } from '@/lib/types';
 import { PropertiesPanel } from './PropertiesPanel';
 import { FurnitureLibrary } from './FurnitureLibrary';
@@ -128,6 +130,20 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
     handleCanvasMouseDown, handleMouseMove, handleMouseUp,
     movingChildrenIdsRef, isPanning
   } = useCanvasInteraction(svgRef, viewBox, setViewBox);
+
+  // Touch gestures for mobile (pinch-zoom, pan)
+  const { isMobile, isTablet, isTouch } = useDeviceType();
+  const {
+    onTouchStart: handleTouchStart,
+    onTouchMove: handleTouchMove,
+    onTouchEnd: handleTouchEnd,
+  } = useTouchGestures({
+    svgRef,
+    viewBox,
+    setViewBox,
+    zoomMin: ZOOM_MIN,
+    zoomMax: ZOOM_MAX,
+  });
 
   // Update viewBox dimensions on mount and resize
   useEffect(() => {
@@ -556,6 +572,9 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
           }
         }}
         onWheel={handleWheel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
@@ -650,6 +669,7 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
           snapPoint={activeSnapPoint}
           selectionBox={selectionBox}
           ghostWallItem={ghostWallItem}
+          isTouch={isTouch}
         />
       </svg>
 

@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useEffect, useRef } from 'react';
 import { Point, GuideLine, WallItem } from '@/lib/types';
 import { WallItemRenderer } from '@/components/WallItemRenderer';
 
@@ -7,14 +7,43 @@ interface InteractionLayerProps {
     snapPoint: Point | null;
     selectionBox: { start: Point; end: Point } | null;
     ghostWallItem: WallItem | null;
+    isTouch?: boolean;
 }
+
+// Haptic feedback utility
+const triggerHaptic = (pattern: number | number[] = 10) => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(pattern);
+    }
+};
 
 export const InteractionLayer: React.FC<InteractionLayerProps> = memo(({
     snapLines,
     snapPoint,
     selectionBox,
-    ghostWallItem
+    ghostWallItem,
+    isTouch = false
 }) => {
+    // Track previous snap state for haptic feedback
+    const prevSnapPoint = useRef<Point | null>(null);
+
+    useEffect(() => {
+        // Trigger haptic when snap point appears or changes position significantly
+        if (snapPoint && isTouch) {
+            if (!prevSnapPoint.current ||
+                Math.abs(snapPoint.x - prevSnapPoint.current.x) > 5 ||
+                Math.abs(snapPoint.y - prevSnapPoint.current.y) > 5) {
+                triggerHaptic(10);
+            }
+        }
+        prevSnapPoint.current = snapPoint;
+    }, [snapPoint, isTouch]);
+
+    // Adjust visual properties for touch devices
+    const lineStrokeWidth = isTouch ? 2 : 1;
+    const snapCircleRadius = isTouch ? 6 : 4;
+    const snapCircleStrokeWidth = isTouch ? 3 : 2;
+
     return (
         <g className="pointer-events-none">
             {/* Ghost Wall Item with validity indicator */}
@@ -49,7 +78,7 @@ export const InteractionLayer: React.FC<InteractionLayerProps> = memo(({
                 </g>
             )}
 
-            {/* Snap guidelines */}
+            {/* Snap guidelines - thicker on touch devices */}
             {snapLines.map((line, i) => (
                 <line
                     key={`snap - ${i}`}
@@ -58,20 +87,20 @@ export const InteractionLayer: React.FC<InteractionLayerProps> = memo(({
                     x2={line.end.x}
                     y2={line.end.y}
                     stroke="#ff00ff"
-                    strokeWidth={1}
-                    strokeDasharray="4 2"
+                    strokeWidth={lineStrokeWidth}
+                    strokeDasharray={isTouch ? "6 3" : "4 2"}
                 />
             ))}
 
-            {/* Snap point indicator */}
+            {/* Snap point indicator - larger on touch devices */}
             {snapPoint && (
                 <circle
                     cx={snapPoint.x}
                     cy={snapPoint.y}
-                    r={4}
+                    r={snapCircleRadius}
                     fill="#ff00ff"
                     stroke="white"
-                    strokeWidth="2"
+                    strokeWidth={snapCircleStrokeWidth}
                 />
             )}
 
@@ -84,7 +113,7 @@ export const InteractionLayer: React.FC<InteractionLayerProps> = memo(({
                     height={Math.abs(selectionBox.end.y - selectionBox.start.y)}
                     fill="rgba(0, 100, 255, 0.1)"
                     stroke="#0064ff"
-                    strokeWidth={1}
+                    strokeWidth={isTouch ? 2 : 1}
                     strokeDasharray="4 2"
                 />
             )}
