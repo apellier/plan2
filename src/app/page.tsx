@@ -6,6 +6,7 @@ import { Toolbar } from '@/components/Toolbar';
 import { SettingsPanel } from '@/components/SettingsPanel';
 import { RoomTemplates } from '@/components/RoomTemplates';
 import { ExportDialog } from '@/components/ExportDialog';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 export default function Home() {
   const [showSettings, setShowSettings] = useState(false);
@@ -15,37 +16,40 @@ export default function Home() {
   const svgRef = useRef<SVGSVGElement>(null);
 
   return (
-    <div className="w-screen h-screen overflow-hidden bg-neo-bg text-neo-text">
-      <Toolbar
-        onOpenSettings={() => setShowSettings(true)}
-        onOpenTemplates={() => setShowTemplates(true)}
-        onOpenExport={() => setShowExport(true)}
-      />
-      <Canvas
-        svgRef={svgRef}
-        onViewBoxChange={(center) => setViewBoxCenter(center)}
-      />
-
-      {/* Settings Panel */}
-      {showSettings && (
-        <SettingsPanel onClose={() => setShowSettings(false)} />
-      )}
-
-      {/* Room Templates */}
-      {showTemplates && (
-        <RoomTemplates
-          onClose={() => setShowTemplates(false)}
-          viewBoxCenter={viewBoxCenter}
+    <ErrorBoundary>
+      <div className="w-screen h-screen overflow-hidden bg-neo-bg text-neo-text">
+        <Toolbar
+          onOpenSettings={() => setShowSettings(true)}
+          onOpenTemplates={() => setShowTemplates(true)}
+          onOpenExport={() => setShowExport(true)}
         />
-      )}
-
-      {/* Export Dialog */}
-      {showExport && (
-        <ExportDialog
-          onClose={() => setShowExport(false)}
+        <Canvas
           svgRef={svgRef}
+          onViewBoxChange={(center) => setViewBoxCenter(center)}
         />
-      )}
-    </div>
+
+        {/* Settings Panel */}
+        {showSettings && (
+          <SettingsPanel onClose={() => setShowSettings(false)} />
+        )}
+
+        {/* Room Templates */}
+        {showTemplates && (
+          <RoomTemplates
+            onClose={() => setShowTemplates(false)}
+            viewBoxCenter={viewBoxCenter}
+          />
+        )}
+
+        {/* Export Dialog */}
+        {showExport && (
+          <ExportDialog
+            onClose={() => setShowExport(false)}
+            svgRef={svgRef}
+          />
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }
+

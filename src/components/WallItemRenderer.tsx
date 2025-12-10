@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { WallItem, Point } from '@/lib/types';
 import { distance } from '@/lib/geometry';
 
@@ -11,7 +11,7 @@ interface WallItemRendererProps {
     wallEnds?: { start: Point, end: Point } | null; // Passed from parent if available
 }
 
-export const WallItemRenderer: React.FC<WallItemRendererProps> = ({ item, isSelected, onMouseDown, onRotate, onResize, wallEnds }) => {
+export const WallItemRenderer: React.FC<WallItemRendererProps> = memo(({ item, isSelected, onMouseDown, onRotate, onResize, wallEnds }) => {
     const { type, x, y, width, height, rotation, flipX, flipY } = item;
 
     // Transform
@@ -197,4 +197,6 @@ export const WallItemRenderer: React.FC<WallItemRendererProps> = ({ item, isSele
             )}
         </g>
     );
-};
+});
+
+WallItemRenderer.displayName = 'WallItemRenderer';

@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { FurnitureItem } from '@/lib/types';
+import { FurnitureItem, AppMode } from '@/lib/types';
 import { FurnitureRenderer } from '@/components/FurnitureRenderer';
 
 interface FurnitureLayerProps {
@@ -8,6 +8,9 @@ interface FurnitureLayerProps {
     onMouseDown: (e: React.MouseEvent, id: string) => void;
     onRotationStart: (e: React.MouseEvent, objectType: 'FURNITURE') => void;
     onResizeStart: (handle: string, e: React.MouseEvent, objectType: 'FURNITURE') => void;
+    onDoubleClick: (e: React.MouseEvent, id: string) => void;
+    onVertexMouseDown: (vertexId: string, e: React.MouseEvent) => void;
+    mode: AppMode;
 }
 
 export const FurnitureLayer: React.FC<FurnitureLayerProps> = memo(({
@@ -15,7 +18,10 @@ export const FurnitureLayer: React.FC<FurnitureLayerProps> = memo(({
     selectedIds,
     onMouseDown,
     onRotationStart,
-    onResizeStart
+    onResizeStart,
+    onDoubleClick,
+    onVertexMouseDown,
+    mode
 }) => {
     return (
         <g>
@@ -27,6 +33,9 @@ export const FurnitureLayer: React.FC<FurnitureLayerProps> = memo(({
                     onMouseDown={(e) => onMouseDown(e, item.id)}
                     onRotate={(e) => onRotationStart(e, 'FURNITURE')}
                     onResize={(handle, e) => onResizeStart(handle, e, 'FURNITURE')}
+                    onDoubleClick={(e) => onDoubleClick(e, item.id)}
+                    onVertexMouseDown={onVertexMouseDown}
+                    mode={mode}
                 />
             ))}
         </g>

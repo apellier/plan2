@@ -10,6 +10,8 @@ interface ZoneLayerProps {
     onDoubleClick: () => void;
     onVertexMouseDown: (vertexId: string, e: React.MouseEvent) => void;
     onEdgeMouseDown: (vertexIndex: number, e: React.MouseEvent) => void;
+    onRotationStart: (e: React.MouseEvent, id: string) => void;
+    onRadiusHandleMouseDown: (vertexId: string, e: React.MouseEvent) => void;
 }
 
 export const ZoneLayer: React.FC<ZoneLayerProps> = memo(({
@@ -19,7 +21,9 @@ export const ZoneLayer: React.FC<ZoneLayerProps> = memo(({
     onMouseDown,
     onDoubleClick,
     onVertexMouseDown,
-    onEdgeMouseDown
+    onEdgeMouseDown,
+    onRotationStart,
+    onRadiusHandleMouseDown
 }) => {
     return (
         <g>
@@ -33,6 +37,8 @@ export const ZoneLayer: React.FC<ZoneLayerProps> = memo(({
                     onDoubleClick={onDoubleClick}
                     onVertexMouseDown={onVertexMouseDown}
                     onEdgeMouseDown={onEdgeMouseDown}
+                    onRotate={(e) => onRotationStart(e, zone.id)}
+                    onRadiusHandleMouseDown={onRadiusHandleMouseDown}
                 />
             ))}
         </g>
@@ -40,3 +46,4 @@ export const ZoneLayer: React.FC<ZoneLayerProps> = memo(({
 });
 
 ZoneLayer.displayName = 'ZoneLayer';
+

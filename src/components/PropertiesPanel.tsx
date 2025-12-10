@@ -5,6 +5,24 @@ import { FlipHorizontal, FlipVertical, ArrowUp, ArrowDown, ChevronsUp, ChevronsD
 
 type ItemType = 'ROOM' | 'ZONE' | 'FURNITURE' | 'WALL_ITEM' | 'TEXT' | 'DRAWING';
 type PropertyValue = string | number | boolean;
+type SelectedItem = RoomShape | ZoneShape | FurnitureItem | WallItem | TextItem | FreehandPath;
+
+// Type-safe property accessors
+const getLabel = (item: SelectedItem, type: ItemType): string => {
+    if ('label' in item && item.label) return item.label;
+    if ('type' in item && typeof item.type === 'string') return item.type;
+    return 'Item';
+};
+
+const getColor = (item: SelectedItem): string => {
+    if ('color' in item && item.color) return item.color;
+    return '#ffffff';
+};
+
+const getOpacity = (item: SelectedItem, type: ItemType): number => {
+    if ('opacity' in item && item.opacity !== undefined) return item.opacity;
+    return type === 'ZONE' ? 0.4 : 0.9;
+};
 
 interface PropertiesPanelProps {
     selectedItem: RoomShape | ZoneShape | FurnitureItem | WallItem | TextItem | FreehandPath | null;
@@ -136,7 +154,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedItem, 
                 <InputGroup label="Identity">
                     <input
                         type="text"
-                        value={(selectedItem as any).label || (selectedItem as any).type}
+                        value={getLabel(selectedItem, type)}
                         onChange={(e) => onUpdate('label', e.target.value)}
                         className="w-full bg-gray-50 border border-black rounded px-2 py-1 text-xs font-bold focus:bg-neo-yellow outline-none mb-2"
                     />
@@ -151,7 +169,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedItem, 
             {type !== 'DRAWING' && (
                 <InputGroup label="Dimensions">
                     <div className="grid grid-cols-2 gap-2">
-                        {type !== 'TEXT' && type !== 'WALL_ITEM' && <NumberInput label="W" value={width} field="width" onUpdate={onUpdate} />}
+                        {type !== 'TEXT' && <NumberInput label="W" value={width} field="width" onUpdate={onUpdate} />}
                         {type !== 'TEXT' && type !== 'WALL_ITEM' && <NumberInput label="H" value={height} field="height" onUpdate={onUpdate} />}
                         <NumberInput label="X" value={x} field="x" onUpdate={onUpdate} />
                         <NumberInput label="Y" value={y} field="y" onUpdate={onUpdate} />
@@ -209,7 +227,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedItem, 
                             <div className="flex gap-1">
                                 <input
                                     type="color"
-                                    value={(selectedItem as any).color || '#ffffff'}
+                                    value={getColor(selectedItem)}
                                     onChange={(e) => onUpdate('color', e.target.value)}
                                     className="w-6 h-6 p-0 border border-black rounded cursor-pointer"
                                 />
@@ -223,7 +241,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedItem, 
                                     min="0"
                                     max="1"
                                     step="0.1"
-                                    value={(selectedItem as any).opacity !== undefined ? (selectedItem as any).opacity : (type === 'ZONE' ? 0.4 : 0.9)}
+                                    value={getOpacity(selectedItem, type)}
                                     onChange={(e) => onUpdate('opacity', parseFloat(e.target.value))}
                                     className="w-20 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-black"
                                 />

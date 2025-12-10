@@ -12,7 +12,7 @@ interface RoomShapeProps {
   onVertexClick: (vertexId: string, e: React.MouseEvent) => void;
   onEdgeMouseDown: (vertexIndex: number, e: React.MouseEvent) => void;
   onRadiusHandleMouseDown: (vertexId: string, e: React.MouseEvent) => void;
-  onRotate?: () => void;
+  onRotate?: (e: React.MouseEvent) => void;
 }
 
 export const RoomShapeRenderer: React.FC<RoomShapeProps> = ({
@@ -163,7 +163,7 @@ export const RoomShapeRenderer: React.FC<RoomShapeProps> = ({
           <circle
             cx={0} cy={-40} r={6}
             className="fill-white stroke-black stroke-1 cursor-grab hover:bg-neo-yellow"
-            onMouseDown={(e) => { e.stopPropagation(); onRotate && onRotate(); }}
+            onMouseDown={(e) => { e.stopPropagation(); onRotate && onRotate(e); }}
           />
         </g>
       )}

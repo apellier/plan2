@@ -19,7 +19,11 @@ export const useKeyboardShortcuts = () => {
         duplicate,
         selectAll,
         canUndo,
-        canRedo
+        canRedo,
+        toggleKeyboardHelp,
+        toggleGridSnap,
+        setShowDeleteConfirm,
+        moveSelectedBy
     } = useStore(useShallow(state => ({
         tool: state.tool,
         setTool: state.setTool,
@@ -35,7 +39,11 @@ export const useKeyboardShortcuts = () => {
         duplicate: state.duplicate,
         selectAll: state.selectAll,
         canUndo: state.canUndo,
-        canRedo: state.canRedo
+        canRedo: state.canRedo,
+        toggleKeyboardHelp: state.toggleKeyboardHelp,
+        toggleGridSnap: state.toggleGridSnap,
+        setShowDeleteConfirm: state.setShowDeleteConfirm,
+        moveSelectedBy: state.moveSelectedBy
     })));
 
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -93,7 +101,9 @@ export const useKeyboardShortcuts = () => {
                     return;
                 case 'Delete':
                 case 'Backspace':
-                    if (selectedIds.length > 0) {
+                    if (selectedIds.length > 1) {
+                        setShowDeleteConfirm(true);
+                    } else if (selectedIds.length === 1) {
                         deleteSelected();
                     }
                     return;
@@ -133,13 +143,41 @@ export const useKeyboardShortcuts = () => {
                 case 'M':
                     setTool(Tool.MEASURE);
                     return;
+                case 'h':
+                case 'H':
+                    setTool(Tool.PAN);
+                    return;
+                case 'g':
+                case 'G':
+                    toggleGridSnap();
+                    return;
+                case '?':
+                    toggleKeyboardHelp();
+                    return;
                 case ' ':
                     e.preventDefault();
                     setTool(Tool.PAN);
                     return;
+                // Arrow keys - move selected elements
+                case 'ArrowUp':
+                    e.preventDefault();
+                    if (selectedIds.length > 0) moveSelectedBy(0, e.shiftKey ? -50 : -10);
+                    return;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    if (selectedIds.length > 0) moveSelectedBy(0, e.shiftKey ? 50 : 10);
+                    return;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    if (selectedIds.length > 0) moveSelectedBy(e.shiftKey ? -50 : -10, 0);
+                    return;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    if (selectedIds.length > 0) moveSelectedBy(e.shiftKey ? 50 : 10, 0);
+                    return;
             }
         }
-    }, [tool, mode, selectedIds, setTool, setMode, setSelected, deleteSelected, undo, redo, copy, paste, duplicate, selectAll, canUndo, canRedo]);
+    }, [tool, mode, selectedIds, setTool, setMode, setSelected, deleteSelected, undo, redo, copy, paste, duplicate, selectAll, canUndo, canRedo, toggleKeyboardHelp, toggleGridSnap, moveSelectedBy]);
 
     const handleKeyUp = useCallback((e: KeyboardEvent) => {
         // Return to SELECT when space is released (pan mode)

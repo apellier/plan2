@@ -1,9 +1,15 @@
+/**
+ * Geometry utilities for 2D point and polygon operations.
+ * All coordinates are in pixels (1px = 1cm in plan view).
+ */
 import { RoomVertex, Point, RoomShape } from './types';
 
+/** Calculate Euclidean distance between two points */
 export const distance = (p1: Point, p2: Point): number => {
     return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
 };
 
+/** Get midpoint between two points */
 export const midpoint = (p1: Point, p2: Point): Point => {
     return {
         x: (p1.x + p2.x) / 2,
@@ -11,26 +17,31 @@ export const midpoint = (p1: Point, p2: Point): Point => {
     };
 };
 
+/** Vector subtraction: p1 - p2 */
 export const subtract = (p1: Point, p2: Point): Point => ({
     x: p1.x - p2.x,
     y: p1.y - p2.y
 });
 
+/** Vector addition: p1 + p2 */
 export const add = (p1: Point, p2: Point): Point => ({
     x: p1.x + p2.x,
     y: p1.y + p2.y
 });
 
+/** Scale a point/vector by scalar s */
 export const scale = (p: Point, s: number): Point => ({
     x: p.x * s,
     y: p.y * s,
 });
 
+/** Normalize a vector to unit length. Returns {0,0} for zero vectors. */
 export const normalize = (p: Point): Point => {
     const len = Math.sqrt(p.x * p.x + p.y * p.y);
     return len === 0 ? { x: 0, y: 0 } : { x: p.x / len, y: p.y / len };
 };
 
+/** Dot product of two vectors */
 export const dot = (p1: Point, p2: Point): number => p1.x * p2.x + p1.y * p2.y;
 
 export const generateRoomPath = (vertices: RoomVertex[]): string => {
@@ -100,7 +111,9 @@ export const calculateInteriorAngle = (p1: Point, p2: Point, p3: Point) => {
     let angleDiff = (angle2 - angle1) * 180 / Math.PI;
     if (angleDiff < 0) angleDiff += 360;
 
-    return angleDiff;
+    // Return the interior angle (the smaller angle for convex shapes)
+    // For typical room shapes, we want the interior angle
+    return angleDiff > 180 ? 360 - angleDiff : angleDiff;
 };
 
 export const getCornerBisector = (prev: Point, curr: Point, next: Point) => {

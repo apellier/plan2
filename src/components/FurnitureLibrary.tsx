@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { FurnitureType } from '@/lib/types';
+import { useStore } from '@/lib/store';
 import { FURNITURE_PRESETS, FURNITURE_CATEGORIES } from '@/lib/constants';
 import {
     BedDouble, Sofa, ChefHat, Bath, Briefcase, TreeDeciduous, UtensilsCrossed,
@@ -38,6 +39,7 @@ const FURNITURE_BY_CATEGORY = Object.entries(FURNITURE_PRESETS).reduce((acc, [ke
 }, {} as Record<CategoryKey, { type: FurnitureType; label: string; width: number; height: number }[]>);
 
 export const FurnitureLibrary: React.FC<FurnitureLibraryProps> = ({ onSelectItem }) => {
+    const isPlacingCustomFurniture = useStore(state => state.isPlacingCustomFurniture);
     const [expandedCategories, setExpandedCategories] = useState<Set<CategoryKey>>(
         new Set(['BEDROOM', 'LIVING'])
     );
@@ -127,10 +129,13 @@ export const FurnitureLibrary: React.FC<FurnitureLibraryProps> = ({ onSelectItem
                 <div className="mt-2 pt-2 border-t border-gray-200">
                     <button
                         onClick={() => onSelectItem('CUSTOM', 0, 0)}
-                        className="w-full flex items-center gap-2 p-2 rounded hover:bg-neo-yellow border-2 border-dashed border-gray-300 hover:border-black transition-all"
+                        className={`w-full flex items-center gap-2 p-2 rounded transition-all border-2 ${isPlacingCustomFurniture
+                                ? 'bg-neo-yellow border-black shadow-[var(--shadow-hard-sm)]'
+                                : 'border-dashed border-gray-300 hover:bg-neo-yellow/20 hover:border-black'
+                            }`}
                     >
-                        <PencilRuler size={16} />
-                        <span className="text-xs font-medium">Custom Shape</span>
+                        <PencilRuler size={16} strokeWidth={isPlacingCustomFurniture ? 2.5 : 2} />
+                        <span className={`text-xs font-medium ${isPlacingCustomFurniture ? 'font-bold' : ''}`}>Custom Shape</span>
                     </button>
                 </div>
             </div>

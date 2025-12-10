@@ -12,6 +12,7 @@ interface RoomLayerProps {
     onVertexClick: (vertexId: string, e: React.MouseEvent) => void;
     onEdgeMouseDown: (vertexIndex: number, e: React.MouseEvent) => void;
     onRadiusHandleMouseDown: (vertexId: string, e: React.MouseEvent) => void;
+    onRotationStart: (e: React.MouseEvent, id: string) => void;
 }
 
 export const RoomLayer: React.FC<RoomLayerProps> = memo(({
@@ -23,7 +24,8 @@ export const RoomLayer: React.FC<RoomLayerProps> = memo(({
     onVertexMouseDown,
     onVertexClick,
     onEdgeMouseDown,
-    onRadiusHandleMouseDown
+    onRadiusHandleMouseDown,
+    onRotationStart
 }) => {
     return (
         <g>
@@ -39,6 +41,7 @@ export const RoomLayer: React.FC<RoomLayerProps> = memo(({
                     onVertexClick={onVertexClick}
                     onEdgeMouseDown={onEdgeMouseDown}
                     onRadiusHandleMouseDown={onRadiusHandleMouseDown}
+                    onRotate={(e) => onRotationStart(e, shape.id)}
                 />
             ))}
         </g>

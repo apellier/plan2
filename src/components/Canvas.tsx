@@ -15,8 +15,11 @@ import { WallItemLayer } from './layers/WallItemLayer';
 import { AnnotationLayer } from './layers/AnnotationLayer';
 import { InteractionLayer } from './layers/InteractionLayer';
 import { MeasurementLayer } from './layers/MeasurementLayer';
-import { midpoint, isPointInPolygon, getPolygonBounds, rotatePolygon } from '@/lib/geometry';
-import { ZOOM_MIN, ZOOM_MAX, ZOOM_WHEEL_SENSITIVITY, Z_INDEX } from '@/lib/constants';
+import { midpoint, isPointInPolygon, getPolygonBounds, rotatePolygon, scalePolygon } from '@/lib/geometry';
+import { ZOOM_MIN, ZOOM_MAX, ZOOM_WHEEL_SENSITIVITY, ZOOM_STEP, Z_INDEX } from '@/lib/constants';
+import { ZoomControls } from './ZoomControls';
+import { KeyboardHelp } from './KeyboardHelp';
+import { ConfirmDialog } from './ConfirmDialog';
 
 import { useStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -56,7 +59,11 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
     reorderItem,
     measurements,
     settings,
-    addMeasurement
+    addMeasurement,
+    showKeyboardHelp,
+    toggleKeyboardHelp,
+    showDeleteConfirm,
+    setShowDeleteConfirm
   } = useStore(useShallow(state => ({
     shapes: state.shapes,
     furniture: state.furniture,
@@ -82,7 +89,11 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
     deleteSelected: state.deleteSelected,
     measurements: state.measurements,
     settings: state.settings,
-    addMeasurement: state.addMeasurement
+    addMeasurement: state.addMeasurement,
+    showKeyboardHelp: state.showKeyboardHelp,
+    toggleKeyboardHelp: state.toggleKeyboardHelp,
+    showDeleteConfirm: state.showDeleteConfirm,
+    setShowDeleteConfirm: state.setShowDeleteConfirm
   })));
 
   // Derived state
@@ -141,15 +152,22 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
   }, [tool]);
 
   // Notify parent of viewBox center changes
+  // Track previous center to prevent infinite loops
+  const prevCenterRef = useRef({ x: 0, y: 0 });
+
   useEffect(() => {
     if (onViewBoxChange) {
       const center = {
         x: viewBox.x + viewBox.width / 2,
         y: viewBox.y + viewBox.height / 2
       };
-      onViewBoxChange(center);
+      // Only call if center actually changed
+      if (center.x !== prevCenterRef.current.x || center.y !== prevCenterRef.current.y) {
+        prevCenterRef.current = center;
+        onViewBoxChange(center);
+      }
     }
-  }, [viewBox, onViewBoxChange]);
+  }, [viewBox.x, viewBox.y, viewBox.width, viewBox.height, onViewBoxChange]);
 
   // Zoom with mouse wheel
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -187,14 +205,20 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
   }, [viewBox]);
 
   // Handle Rotation Start
-  const handleRotationStart = useCallback((objectType: 'FURNITURE' | 'WALL_ITEM' | 'TEXT', e: React.MouseEvent) => {
+  const handleRotationStart = useCallback((objectType: 'FURNITURE' | 'WALL_ITEM' | 'TEXT' | 'ROOM' | 'ZONE', e: React.MouseEvent, id?: string) => {
     e.stopPropagation();
-    if (!selectedId) return;
+    const targetId = id || selectedId;
+    if (!targetId) return;
+
+    // Select the item if not already selected
+    if (!selectedIds.includes(targetId)) {
+      setSelected([targetId]);
+    }
 
     const pos = getSVGPoint(e);
     setDragStart(pos);
     setDragAction(`ROTATE_${objectType}`);
-  }, [selectedId, getSVGPoint, setDragStart, setDragAction]);
+  }, [selectedId, selectedIds, setSelected, getSVGPoint, setDragStart, setDragAction]);
 
   const handleResizeStart = useCallback((objectType: 'FURNITURE' | 'WALL_ITEM', handle: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -216,16 +240,20 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
       if (type === 'ROOM') {
         const shape = shapes.find(s => s.id === id);
         if (shape) {
-          if (['x', 'y', 'rotation'].includes(field)) {
+          if (['x', 'y', 'rotation', 'width', 'height'].includes(field)) {
+            const bounds = getPolygonBounds(shape.vertices);
             if (field === 'x' || field === 'y') {
-              const bounds = getPolygonBounds(shape.vertices);
               const dx = field === 'x' ? (value as number) - bounds.center.x : 0;
               const dy = field === 'y' ? (value as number) - bounds.center.y : 0;
               updateShape(id, { vertices: shape.vertices.map(v => ({ ...v, x: v.x + dx, y: v.y + dy })) });
             } else if (field === 'rotation') {
-              const bounds = getPolygonBounds(shape.vertices);
               const rotatedVertices = rotatePolygon(shape.vertices, (value as number) - (shape.rotation || 0), bounds.center);
               updateShape(id, { vertices: rotatedVertices, rotation: value as number });
+            } else if (field === 'width' || field === 'height') {
+              const scaleX = field === 'width' ? (value as number) / bounds.width : 1;
+              const scaleY = field === 'height' ? (value as number) / bounds.height : 1;
+              const scaledVertices = scalePolygon(shape.vertices, scaleX, scaleY, bounds.center);
+              updateShape(id, { vertices: scaledVertices });
             }
           } else updateShape(id, { [field]: value });
         }
@@ -270,56 +298,85 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
     if (!e.shiftKey) setSelected([id]);
     else toggleSelection(id, true);
 
-    // Parent-Child Logic: Find children inside this room
+    // Parent-Child Logic: ALL items inside this room move with it
     const shape = shapes.find(s => s.id === id);
     const children: string[] = [];
     if (shape) {
-      furniture.forEach(f => { if (isPointInPolygon({ x: f.x, y: f.y }, shape.vertices)) children.push(f.id); });
-      texts.forEach(t => { if (isPointInPolygon({ x: t.x, y: t.y }, shape.vertices)) children.push(t.id); });
+      // Add zones whose center is inside this room
+      zones.forEach(z => {
+        const zoneBounds = getPolygonBounds(z.vertices);
+        if (isPointInPolygon(zoneBounds.center, shape.vertices)) children.push(z.id);
+      });
+      // Add furniture whose center is inside this room
+      furniture.forEach(f => {
+        if (isPointInPolygon({ x: f.x, y: f.y }, shape.vertices)) children.push(f.id);
+      });
+      // Add wall items attached to this room
       wallItems.forEach(w => { if (w.attachedTo === id) children.push(w.id); });
     }
     movingChildrenIdsRef.current = children;
 
     setDragStart(point);
     setDragAction('MOVE_SHAPE');
-  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction, shapes, furniture, texts, wallItems, movingChildrenIdsRef]);
+  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction, shapes, zones, furniture, wallItems, movingChildrenIdsRef]);
 
   const handleZoneMouseDown = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     const point = getSVGPoint(e);
     if (!e.shiftKey) setSelected([id]); else toggleSelection(id, true);
+    movingChildrenIdsRef.current = []; // Clear - zones move independently
     setDragStart(point);
     setDragAction('MOVE_ZONE');
-  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction]);
+  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction, movingChildrenIdsRef]);
 
   const handleFurnitureMouseDown = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    const point = getSVGPoint(e);
-    if (!e.shiftKey) setSelected([id]); else toggleSelection(id, true);
-    setDragStart(point);
-    setDragAction('MOVE_FURNITURE');
-  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction]);
+    if (tool === Tool.SELECT) {
+      if (e.shiftKey) {
+        toggleSelection(id, true);
+      } else {
+        if (!selectedIds.includes(id)) {
+          setSelected([id]);
+        }
+      }
+      setDragStart(getSVGPoint(e));
+      setDragAction(`MOVE_FURNITURE_${id}`);
+      movingChildrenIdsRef.current = [];
+    }
+  }, [tool, selectedIds, toggleSelection, setSelected, setDragStart, setDragAction, getSVGPoint, movingChildrenIdsRef]);
+
+  const handleFurnitureDoubleClick = useCallback((e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const item = furniture.find(f => f.id === id);
+    if (item && item.type === 'CUSTOM') {
+      setSelected([id]);
+      setMode(AppMode.VERTEX_EDIT);
+    }
+  }, [furniture, setSelected, setMode]);
 
   const handleWallItemMouseDown = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     const point = getSVGPoint(e);
     if (!e.shiftKey) setSelected([id]); else toggleSelection(id, true);
+    movingChildrenIdsRef.current = []; // Clear - wall items move independently
     setDragStart(point);
     setDragAction('MOVE_WALL_ITEM');
-  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction]);
+  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction, movingChildrenIdsRef]);
 
   const handleTextMouseDown = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     const point = getSVGPoint(e);
     if (!e.shiftKey) setSelected([id]); else toggleSelection(id, true);
+    movingChildrenIdsRef.current = []; // Clear - texts move independently
     setDragStart(point);
     setDragAction('MOVE_TEXT');
-  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction]);
+  }, [getSVGPoint, setSelected, toggleSelection, setDragStart, setDragAction, movingChildrenIdsRef]);
 
   const handleDrawingMouseDown = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (!e.shiftKey) setSelected([id]); else toggleSelection(id, true);
-  }, [setSelected, toggleSelection]);
+    movingChildrenIdsRef.current = []; // Clear - drawings move independently
+  }, [setSelected, toggleSelection, movingChildrenIdsRef]);
 
   const handleVertexMouseDown = useCallback((vertexId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -413,23 +470,46 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
     setPendingMeasurement({ start: point, end: point });
   }, []);
 
-  const handleMeasureMove = useCallback((point: Point) => {
+  const handleMeasureMove = useCallback((point: Point, isShift: boolean) => {
     if (pendingMeasurement) {
-      setPendingMeasurement({ ...pendingMeasurement, end: point });
+      let end = point;
+      if (isShift) {
+        const start = pendingMeasurement.start;
+        const dx = Math.abs(point.x - start.x);
+        const dy = Math.abs(point.y - start.y);
+        if (dx > dy) {
+          end = { ...point, y: start.y };
+        } else {
+          end = { ...point, x: start.x };
+        }
+      }
+      setPendingMeasurement({ ...pendingMeasurement, end });
     }
   }, [pendingMeasurement]);
 
-  const handleMeasureEnd = useCallback((point: Point) => {
+  const handleMeasureEnd = useCallback((point: Point, isShift: boolean) => {
     if (pendingMeasurement) {
-      const dx = point.x - pendingMeasurement.start.x;
-      const dy = point.y - pendingMeasurement.start.y;
+      let end = point;
+      if (isShift) {
+        const start = pendingMeasurement.start;
+        const dx = Math.abs(point.x - start.x);
+        const dy = Math.abs(point.y - start.y);
+        if (dx > dy) {
+          end = { ...point, y: start.y };
+        } else {
+          end = { ...point, x: start.x };
+        }
+      }
+
+      const dx = end.x - pendingMeasurement.start.x;
+      const dy = end.y - pendingMeasurement.start.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
 
       if (distance > 5) { // Only add if meaningful distance
         addMeasurement({
           id: uuidv4(),
           start: pendingMeasurement.start,
-          end: point,
+          end: end,
           distance
         });
       }
@@ -452,7 +532,7 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
         ref={svgRef}
         className="w-full h-full"
         style={{ cursor: getCursor() }}
-        viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
+        viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height} `}
         xmlns="http://www.w3.org/2000/svg"
         onMouseDown={(e) => {
           if (tool === Tool.MEASURE) {
@@ -463,14 +543,14 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
         }}
         onMouseMove={(e) => {
           if (tool === Tool.MEASURE && pendingMeasurement) {
-            handleMeasureMove(getSVGPoint(e));
+            handleMeasureMove(getSVGPoint(e), e.shiftKey);
           } else {
             handleMouseMove(e);
           }
         }}
         onMouseUp={(e) => {
           if (tool === Tool.MEASURE && pendingMeasurement) {
-            handleMeasureEnd(getSVGPoint(e));
+            handleMeasureEnd(getSVGPoint(e), e.shiftKey);
           } else {
             handleMouseUp(e);
           }
@@ -500,53 +580,62 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
       >
         {settings.showGrid && <GridLayer viewBox={viewBox} />}
 
-        <ZoneLayer
-          zones={zones}
-          selectedIds={selectedIds}
-          mode={mode}
-          onMouseDown={handleZoneMouseDown}
-          onDoubleClick={() => setMode(AppMode.VERTEX_EDIT)}
-          onVertexMouseDown={handleVertexMouseDown}
-          onEdgeMouseDown={handleEdgeMouseDown}
-        />
+        {/* Content layers - disable pointer events when using drawing tools so clicks pass through to canvas */}
+        <g style={{ pointerEvents: tool === Tool.SELECT ? 'auto' : 'none' }}>
+          <RoomLayer
+            shapes={shapes}
+            selectedIds={selectedIds}
+            mode={mode}
+            onMouseDown={handleShapeMouseDown}
+            onDoubleClick={() => setMode(AppMode.VERTEX_EDIT)}
+            onVertexMouseDown={handleVertexMouseDown}
+            onVertexClick={handleVertexClick}
+            onEdgeMouseDown={handleEdgeMouseDown}
+            onRadiusHandleMouseDown={handleRadiusHandleMouseDown}
+            onRotationStart={(e, id) => handleRotationStart('ROOM', e, id)}
+          />
 
-        <RoomLayer
-          shapes={shapes}
-          selectedIds={selectedIds}
-          mode={mode}
-          onMouseDown={handleShapeMouseDown}
-          onDoubleClick={() => setMode(AppMode.VERTEX_EDIT)}
-          onVertexMouseDown={handleVertexMouseDown}
-          onVertexClick={handleVertexClick}
-          onEdgeMouseDown={handleEdgeMouseDown}
-          onRadiusHandleMouseDown={handleRadiusHandleMouseDown}
-        />
+          <ZoneLayer
+            zones={zones}
+            selectedIds={selectedIds}
+            mode={mode}
+            onMouseDown={handleZoneMouseDown}
+            onDoubleClick={() => setMode(AppMode.VERTEX_EDIT)}
+            onVertexMouseDown={handleVertexMouseDown}
+            onEdgeMouseDown={handleEdgeMouseDown}
+            onRotationStart={(e, id) => handleRotationStart('ZONE', e, id)}
+            onRadiusHandleMouseDown={handleRadiusHandleMouseDown}
+          />
 
-        <FurnitureLayer
-          furniture={furniture}
-          selectedIds={selectedIds}
-          onMouseDown={handleFurnitureMouseDown}
-          onRotationStart={(e) => handleRotationStart('FURNITURE', e)}
-          onResizeStart={(handle, e) => handleResizeStart('FURNITURE', handle, e)}
-        />
+          <FurnitureLayer
+            furniture={furniture}
+            selectedIds={selectedIds}
+            onMouseDown={handleFurnitureMouseDown}
+            onRotationStart={(e) => handleRotationStart('FURNITURE', e)}
+            onResizeStart={(handle, e) => handleResizeStart('FURNITURE', handle, e)}
+            onDoubleClick={handleFurnitureDoubleClick}
+            onVertexMouseDown={handleVertexMouseDown}
+            mode={mode}
+          />
 
-        <WallItemLayer
-          wallItems={wallItems}
-          selectedIds={selectedIds}
-          onMouseDown={handleWallItemMouseDown}
-          onRotationStart={(e) => handleRotationStart('WALL_ITEM', e)}
-          onResizeStart={(handle, e) => handleResizeStart('WALL_ITEM', handle, e)}
-        />
+          <WallItemLayer
+            wallItems={wallItems}
+            selectedIds={selectedIds}
+            onMouseDown={handleWallItemMouseDown}
+            onRotationStart={(e) => handleRotationStart('WALL_ITEM', e)}
+            onResizeStart={(handle, e) => handleResizeStart('WALL_ITEM', handle, e)}
+          />
 
-        <AnnotationLayer
-          texts={texts}
-          drawings={drawings}
-          selectedIds={selectedIds}
-          onTextMouseDown={handleTextMouseDown}
-          onTextRotationStart={(e) => handleRotationStart('TEXT', e)}
-          onDrawingMouseDown={handleDrawingMouseDown}
-          pendingDrawing={pendingDrawing}
-        />
+          <AnnotationLayer
+            texts={texts}
+            drawings={drawings}
+            selectedIds={selectedIds}
+            onTextMouseDown={handleTextMouseDown}
+            onTextRotationStart={(e) => handleRotationStart('TEXT', e)}
+            onDrawingMouseDown={handleDrawingMouseDown}
+            pendingDrawing={pendingDrawing}
+          />
+        </g>
 
         <MeasurementLayer
           measurements={measurements}
@@ -564,10 +653,29 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
         />
       </svg>
 
-      {/* Zoom indicator */}
-      <div className="fixed bottom-6 left-6 bg-white/90 border-2 border-black shadow-[var(--shadow-hard)] rounded-lg px-3 py-1.5 text-xs font-mono z-50">
-        {Math.round(viewBox.scale * 100)}%
-      </div>
+      {/* Zoom Controls */}
+      <ZoomControls
+        scale={viewBox.scale}
+        onZoomIn={() => setViewBox(prev => ({
+          ...prev,
+          scale: Math.min(ZOOM_MAX, prev.scale + ZOOM_STEP)
+        }))}
+        onZoomOut={() => setViewBox(prev => ({
+          ...prev,
+          scale: Math.max(ZOOM_MIN, prev.scale - ZOOM_STEP)
+        }))}
+        onFitToView={() => setViewBox(prev => ({
+          ...prev,
+          x: 0,
+          y: 0,
+          scale: 1
+        }))}
+      />
+
+      {/* Keyboard Help Dialog */}
+      {showKeyboardHelp && (
+        <KeyboardHelp onClose={toggleKeyboardHelp} />
+      )}
 
       {/* UI Overlays */}
       {showFurnitureLibrary && (
@@ -579,10 +687,25 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
           selectedItem={selectedItemForPanel}
           type={selectedType}
           onUpdate={handlePropertyUpdate}
-          onDelete={deleteSelected}
+          onDelete={() => selectedIds.length > 1 ? setShowDeleteConfirm(true) : deleteSelected()}
           onReorder={reorderItem}
         />
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        title="Delete Items"
+        message={`Are you sure you want to delete ${selectedIds.length} selected items ? This action cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        onConfirm={() => {
+          deleteSelected();
+          setShowDeleteConfirm(false);
+        }}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 };

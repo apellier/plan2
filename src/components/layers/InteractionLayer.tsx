@@ -17,14 +17,35 @@ export const InteractionLayer: React.FC<InteractionLayerProps> = memo(({
 }) => {
     return (
         <g className="pointer-events-none">
-            {/* Ghost Wall Item */}
+            {/* Ghost Wall Item with validity indicator */}
             {ghostWallItem && (
-                <g opacity={0.5}>
+                <g
+                    opacity={ghostWallItem.attachedTo ? 0.6 : 0.4}
+                    className={ghostWallItem.attachedTo ? '' : 'hue-rotate-180'}
+                >
                     <WallItemRenderer
                         item={ghostWallItem}
                         isSelected={false}
                         onMouseDown={() => { }}
                     />
+                    {/* Invalid placement indicator */}
+                    {!ghostWallItem.attachedTo && (
+                        <g transform={`translate(${ghostWallItem.x}, ${ghostWallItem.y - 30})`}>
+                            <rect
+                                x="-50" y="-10"
+                                width="100" height="20"
+                                rx="4"
+                                className="fill-red-500/90 stroke-red-700"
+                            />
+                            <text
+                                textAnchor="middle"
+                                dy="0.35em"
+                                className="text-[10px] font-bold fill-white"
+                            >
+                                Move to wall
+                            </text>
+                        </g>
+                    )}
                 </g>
             )}
 

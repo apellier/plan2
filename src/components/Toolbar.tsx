@@ -49,6 +49,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onOpenSettings, onOpenTemplate
         toggleGridSnap,
         clearMeasurements,
         measurements,
+        isPlacingCustomFurniture,
+        setPlacingCustomFurniture,
     } = useStore(useShallow(state => ({
         tool: state.tool,
         setTool: state.setTool,
@@ -68,6 +70,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onOpenSettings, onOpenTemplate
         toggleGridSnap: state.toggleGridSnap,
         clearMeasurements: state.clearMeasurements,
         measurements: state.measurements,
+        isPlacingCustomFurniture: state.isPlacingCustomFurniture,
+        setPlacingCustomFurniture: state.setPlacingCustomFurniture,
     })));
 
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -116,14 +120,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onOpenSettings, onOpenTemplate
                 {TOOL_CONFIG.map(({ tool: t, icon: Icon, label, shortcut }) => (
                     <button
                         key={t}
-                        onClick={() => setTool(t)}
-                        className={`flex flex-col items-center justify-center w-11 h-11 rounded-lg transition-all ${tool === t
+                        onClick={() => {
+                            setTool(t);
+                            // If switching to furniture, ensure custom mode is OFF unless specifically toggled via custom button
+                            if (t === Tool.FURNITURE) setPlacingCustomFurniture(false);
+                        }}
+                        className={`flex flex-col items-center justify-center w-11 h-11 rounded-lg transition-all ${tool === t && (t !== Tool.FURNITURE || !isPlacingCustomFurniture)
                             ? 'bg-neo-yellow border-2 border-black shadow-[var(--shadow-hard-sm)]'
                             : 'hover:bg-gray-100 border-2 border-transparent'
                             }`}
                         title={`${label} (${shortcut})`}
                     >
-                        <Icon size={16} strokeWidth={tool === t ? 2.5 : 2} />
+                        <Icon size={16} strokeWidth={tool === t && (t !== Tool.FURNITURE || !isPlacingCustomFurniture) ? 2.5 : 2} />
                         <span className="text-[8px] font-bold mt-0.5">{shortcut}</span>
                     </button>
                 ))}
@@ -140,9 +148,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onOpenSettings, onOpenTemplate
                 </button>
                 <button
                     onClick={toggleGridSnap}
-                    className={`flex flex-col items-center justify-center w-10 h-10 rounded-lg transition-all ${
-                        settings.gridSnap ? 'bg-neo-green' : 'hover:bg-gray-100'
-                    }`}
+                    className={`flex flex-col items-center justify-center w-10 h-10 rounded-lg transition-all ${settings.gridSnap ? 'bg-neo-green' : 'hover:bg-gray-100'
+                        }`}
                     title={`Grid Snap: ${settings.gridSnap ? 'ON' : 'OFF'}`}
                 >
                     <Grid size={16} />
