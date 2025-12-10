@@ -37,6 +37,7 @@ export const Z_INDEX = {
     FURNITURE: 2,
     WALL_ITEM: 2,
     TEXT: 3,
+    DRAWING: 3,
     ZONE: 10,
 } as const;
 

@@ -97,12 +97,27 @@ export const useCanvasInteraction = (
     const panStartViewBox = useRef<{ x: number; y: number } | null>(null);
 
     // SVG Point Helper
-    const getSVGPoint = useCallback((e: React.MouseEvent | MouseEvent): Point => {
+    const getSVGPoint = useCallback((e: React.MouseEvent | MouseEvent | React.TouchEvent | React.Touch): Point => {
         if (!svgRef.current) return { x: 0, y: 0 };
         const rect = svgRef.current.getBoundingClientRect();
+
+        let clientX = 0;
+        let clientY = 0;
+
+        if ('clientX' in e) {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        } else if ('touches' in e && e.touches.length > 0) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else if ('changedTouches' in e && e.changedTouches.length > 0) {
+            clientX = e.changedTouches[0].clientX;
+            clientY = e.changedTouches[0].clientY;
+        }
+
         return {
-            x: viewBox.x + (e.clientX - rect.left) * viewBox.width / rect.width,
-            y: viewBox.y + (e.clientY - rect.top) * viewBox.height / rect.height
+            x: viewBox.x + (clientX - rect.left) * viewBox.width / rect.width,
+            y: viewBox.y + (clientY - rect.top) * viewBox.height / rect.height
         };
     }, [viewBox, svgRef]);
 
@@ -314,7 +329,7 @@ export const useCanvasInteraction = (
     }, [shapes, ghostWallItem, addWallItem]);
 
     // Handlers
-    const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
+    const handleCanvasMouseDown = useCallback((e: React.MouseEvent | React.TouchEvent) => {
         const point = getSVGPoint(e);
         setHasDragged(false);
 
@@ -357,14 +372,18 @@ export const useCanvasInteraction = (
             return;
         }
         if (tool === Tool.SELECT) {
-            if (!e.shiftKey) { setSelected([]); movingChildrenIds.current = []; }
+            if (!('shiftKey' in e) || !e.shiftKey) { setSelected([]); movingChildrenIds.current = []; }
             setDragStart(point);
             setSelectionBox({ start: point, end: point });
             setDragAction('SELECTING_MARQUEE');
         }
     }, [tool, getSVGPoint, initFurnitureCreation, placingCustomFurniture, initRoomCreation, initZoneCreation, createText, createWallItem, setSelected, viewBox.x, viewBox.y]);
 
-    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const handleMouseMove = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+        // Prevent default only if it's a touch event to avoid scrolling while dragging
+        if ('touches' in e) {
+            // e.preventDefault(); // Moved to Canvas.tsx or handle here if needed (safe to not prevent here if handled in Canvas)
+        }
         const rawPoint = getSVGPoint(e);
 
         if (!dragStart) {
@@ -388,8 +407,21 @@ export const useCanvasInteraction = (
 
         // Handle panning
         if (dragAction === 'PANNING' && panStartViewBox.current) {
-            const dx = (e.clientX - (svgRef.current?.getBoundingClientRect().left || 0)) * viewBox.width / (svgRef.current?.getBoundingClientRect().width || 1);
-            const dy = (e.clientY - (svgRef.current?.getBoundingClientRect().top || 0)) * viewBox.height / (svgRef.current?.getBoundingClientRect().height || 1);
+            let clientX = 0;
+            let clientY = 0;
+            if ('clientX' in e) {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            } else if ('touches' in e && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else if ('changedTouches' in e && e.changedTouches.length > 0) {
+                clientX = e.changedTouches[0].clientX;
+                clientY = e.changedTouches[0].clientY;
+            }
+
+            const dx = (clientX - (svgRef.current?.getBoundingClientRect().left || 0)) * viewBox.width / (svgRef.current?.getBoundingClientRect().width || 1);
+            const dy = (clientY - (svgRef.current?.getBoundingClientRect().top || 0)) * viewBox.height / (svgRef.current?.getBoundingClientRect().height || 1);
             const startDx = (dragStart.x - panStartViewBox.current.x);
             const startDy = (dragStart.y - panStartViewBox.current.y);
             setViewBox(prev => ({
@@ -849,30 +881,25 @@ export const useCanvasInteraction = (
         setViewBox, applySnapping, selectionBox, setShapes, setZones, setFurniture, setWallItems, setTexts, updateFurniture, updateWallItem, updateShape, updateZone, svgRef, viewBox.width, viewBox.height
     ]);
 
-    const handleMouseUp = useCallback((e: React.MouseEvent) => {
-        if (!dragStart && !isPanning) return;
+    const handleMouseUp = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+        setDragStart(null);
+        setDragAction(null);
+        setIsPanning(false);
+        setSnapLines([]);
+        setSnapPoint(null);
+        setSelectionBox(null);
+        panStartViewBox.current = null;
 
-        if (dragAction === 'PANNING') {
-            setDragStart(null);
-            setDragAction(null);
-            setIsPanning(false);
-            panStartViewBox.current = null;
-            return;
-        }
-
-        if (dragAction === 'DRAWING_FREEHAND' && pendingDrawing.length > 1) {
-            addDrawing({ id: uuidv4(), points: [...pendingDrawing], strokeColor: DEFAULT_STROKE_COLOR, strokeWidth: DEFAULT_STROKE_WIDTH, zIndex: Z_INDEX.ROOM });
-            setGhostWallItem(null);
-            setTool(Tool.SELECT);
-        } else if (dragAction === 'CREATING_SHAPE' || dragAction === 'CREATING_ZONE' || dragAction === 'CREATING_FURNITURE_CUSTOM') {
-            const currentPoint = getSVGPoint(e);
-            if (selectedId && (!hasDragged || (dragStart && distance(dragStart, currentPoint) < 10))) {
-                deleteSelected();
-            } else {
-                setTool(Tool.SELECT);
+        if (dragAction === 'DRAWING_FREEHAND' && pendingDrawing.length > 0) {
+            if (pendingDrawing.length > 2) {
+                addDrawing({
+                    id: uuidv4(), points: pendingDrawing,
+                    strokeColor: DEFAULT_STROKE_COLOR, strokeWidth: DEFAULT_STROKE_WIDTH, zIndex: Z_INDEX.DRAWING
+                });
             }
-            saveToHistory();
+            setPendingDrawing([]);
         } else if (dragAction === 'SELECTING_MARQUEE' && selectionBox) {
+            // Handle Marquee Selection
             const box = {
                 x: Math.min(selectionBox.start.x, selectionBox.end.x),
                 y: Math.min(selectionBox.start.y, selectionBox.end.y),

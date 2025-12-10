@@ -134,9 +134,9 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
   // Touch gestures for mobile (pinch-zoom, pan)
   const { isMobile, isTablet, isTouch } = useDeviceType();
   const {
-    onTouchStart: handleTouchStart,
-    onTouchMove: handleTouchMove,
-    onTouchEnd: handleTouchEnd,
+    onTouchStart: handlePinchStart,
+    onTouchMove: handlePinchMove,
+    onTouchEnd: handlePinchEnd,
   } = useTouchGestures({
     svgRef,
     viewBox,
@@ -144,6 +144,31 @@ export const Canvas: React.FC<CanvasProps> = ({ svgRef: externalSvgRef, onViewBo
     zoomMin: ZOOM_MIN,
     zoomMax: ZOOM_MAX,
   });
+
+  // Combined Touch Handlers
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      handlePinchStart(e);
+    } else if (e.touches.length === 1) {
+      handleCanvasMouseDown(e);
+    }
+  }, [handlePinchStart, handleCanvasMouseDown]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      handlePinchMove(e);
+    } else if (e.touches.length === 1) {
+      // Only allow move interaction if we started an action or we want to support panning via 1 finger if tool is PAN
+      handleMouseMove(e);
+    }
+  }, [handlePinchMove, handleMouseMove]);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    handlePinchEnd(e);
+    handleMouseUp(e);
+  }, [handlePinchEnd, handleMouseUp]);
+
+  // Update viewBox dimensions on mount and resize
 
   // Update viewBox dimensions on mount and resize
   useEffect(() => {
